@@ -19,9 +19,12 @@ Touch buttons appear on touch devices.
 ## Feel systems
 
 - **Movement:** separate ground and air acceleration/deceleration, a turn-around boost, coyote time, jump buffering, variable jump height (release cut), apex hang, heavier fall gravity, and ceiling corner correction.
-- **Lantern beam:** hold to pour a cone of light that burns fuel. Fuel regenerates after a short pause. Arrows aim the beam, and it sweeps toward the new angle rather than snapping (turning around sweeps over your head). Murklings in the cone burn and are pushed along it. Walls block the light. The beam reveals hidden walkways at range and narrows the lantern's glow while lit. Emptying the tank causes a burnout: the lantern dims and can't relight until fuel recovers. Pogo is kept behind `ABILITIES.pogo` for a later unlock.
+- **Lantern beam:** hold to pour a soft cone of light that burns fuel and lights up the rock it falls on. Fuel regenerates after a short pause. Arrows aim the beam, and it sweeps toward the new angle rather than snapping (turning around sweeps over your head). Murklings in the cone burn and are pushed along it. Walls block the light. The beam reveals hidden walkways at range and narrows the lantern's glow while lit. Emptying the tank causes a burnout: the lantern dims and can't relight until fuel recovers. Pogo is kept behind `ABILITIES.pogo` for a later unlock.
 - **Murklings:** a telegraphed lunge (eyes turn orange), cancelled by the beam.
-- **Healing:** beacons only, for now.
+- **Healing (light-based, no channelled heal):**
+  - *Wick-lamps*: shine the beam on an unlit lamp for about 1.2s to light it. Standing in its warm zone restores a mask every 2.5s, up to 2 per lamp. Murklings won't enter the warmth. Resting at a beacon or dying resets the lamps.
+  - *Embers*: Murklings burned by your beam often drop an ember. Gather 3 to mend a mask.
+  - *Beacons*: full restore, and they're your checkpoints.
 - **Damage:** knockback, a brief control lock, i-frames, and lantern flicker.
 - **Juice:** squash and stretch, plus dust when running, skidding and landing.
 - **Camera:** smoothed follow with look-ahead.
