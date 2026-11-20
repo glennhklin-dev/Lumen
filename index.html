@@ -82,7 +82,8 @@ const TDEF = [
   {k:'beamDps',      v:3.5,  min:0.5, max:10,   s:0.1,  l:'Burn per second (Murkling = 1.6)'},
   {k:'beamKnock',    v:170,  min:0,   max:700,  s:10,   l:'Push on enemies (px/s)'},
   {k:'beamMoveMult', v:0.6,  min:0.2, max:1,    s:0.05, l:'Move speed while beaming ×'},
-  {k:'fuelDrain',    v:32,   min:5,   max:100,  s:1,    l:'Fuel drain (/s, tank 100)'},
+  {k:'fuelMax',      v:100,  min:50,  max:300,  s:5,    l:'Fuel capacity (upgrades raise this)'},
+  {k:'fuelDrain',    v:32,   min:5,   max:100,  s:1,    l:'Fuel drain (/s)'},
   {k:'fuelRegen',    v:18,   min:2,   max:80,   s:1,    l:'Fuel regen (/s)'},
   {k:'regenDelay',   v:0.7,  min:0,   max:3,    s:0.05, l:'Regen delay after use (s)'},
   {k:'igniteCost',   v:4,    min:0,   max:30,   s:1,    l:'Ignition cost'},
@@ -103,7 +104,9 @@ const TDEF = [
   {k:'lookahead',    v:70,   min:0,   max:200,  s:5,    l:'Camera look-ahead (px)'},
   {k:'squash',       v:1,    min:0,   max:2,    s:0.1,  l:'Squash & stretch ×'},
   {g:'Wick-lamps & embers'},
-  {k:'lampKindleTime',v:1.2, min:0.2, max:4,    s:0.1,  l:'Beam time to light a lamp (s)'},
+  {k:'lampFuelCost', v:35,   min:5,   max:150,  s:1,    l:'Oil to light a lamp the 1st time'},
+  {k:'lampFuelStep', v:25,   min:0,   max:100,  s:1,    l:'Extra oil each relight'},
+  {k:'lampFade',     v:80,   min:5,   max:300,  s:5,    l:'Kindling lost/s when beam leaves'},
   {k:'lampRadius',   v:85,   min:40,  max:200,  s:5,    l:'Lamp warm-zone radius (px)'},
   {k:'lampHealTime', v:2.5,  min:0.5, max:6,    s:0.1,  l:'Seconds per mask in warm zone'},
   {k:'lampCharges',  v:2,    min:1,   max:5,    s:1,    l:'Masks a lamp holds'},
@@ -244,7 +247,7 @@ const cam = { x: 0, y: 0, look: 0 };
 
 function newPlayer() {
   return { x: SPAWN.x, y: SPAWN.y, w: 18, h: 28, vx: 0, vy: 0, facing: 1, grounded: false, coyote: 0, jumpBuf: 0, jumping: false,
-    fuel: 100, beamOn: false, beamAng: 0, burnout: false, regenT: 0, rays: null, beamO: null, pogoCD: 0,
+    fuel: T.fuelMax, maxFuel: T.fuelMax, beamOn: false, beamAng: 0, burnout: false, regenT: 0, rays: null, beamO: null, pogoCD: 0,
     masks: 5, maxMasks: 5, embers: 0, inv: 0, hurtLock: 0, hazard: 0, sx: 1, sy: 1,
     dropT: 0, dust: 0, anim: 0, lastSafe: { x: SPAWN.x, y: SPAWN.y }, maskLost: 0 };
 }
@@ -379,10 +382,10 @@ function die() {
   stats.deaths++;
   state = 'dying'; stateT = 0;
 }
-function resetLamps() { lamps = LAMP_DEF.map(x => ({ x, kindle: 0, lit: false, charges: T.lampCharges, healT: 0, glow: 0 })); }
+function resetLamps() { lamps = LAMP_DEF.map(x => ({ x, kindle: 0, lit: false, charges: T.lampCharges, healT: 0, glow: 0, lights: 0, warned: false })); }
 function respawnAtCheckpoint() {
   const keepEmbers = P.embers;
-  P = newPlayer(); P.embers = keepEmbers; resetLamps(); embers = [];
+  P = newPlayer(); P.embers = keepEmbers; embers = [];
   P.x = checkpoint.x; P.y = checkpoint.y; P.lastSafe = { ...checkpoint };
   resetEnemies(); snapCam(); clearPressed();
   state = 'play'; fade = 1;
@@ -449,7 +452,7 @@ function tickPlayer(dt) {
     }
   } else {
     p.regenT -= dt;
-    if (p.regenT <= 0) p.fuel = Math.min(100, p.fuel + T.fuelRegen * dt);
+    if (p.regenT <= 0) p.fuel = Math.min(p.maxFuel, p.fuel + T.fuelRegen * dt);
   }
   if (p.burnout && p.fuel >= T.burnoutRelight) p.burnout = false;
   if (p.burnout && isHeld('flash') && Math.random() < dt * 12) { const o = beamOrigin(p); burst(o.x, o.y, 1, { color: '#a08060', g: -30, smin: 10, smax: 40, lmin: 0.3, lmax: 0.6 }); }
@@ -665,7 +668,7 @@ function tick(dt) {
         if (b.final) { state = 'end'; stateT = -1.4; }
       } else if (P.masks < P.maxMasks) toast('You rest by the flame.', 1.6);
       checkpoint = { x: bx - P.w / 2, y: (b.y + 1) * TILE - P.h };
-      P.masks = P.maxMasks; resetLamps();
+      P.masks = P.maxMasks;
     }
     b.near = near;
   }
@@ -687,6 +690,10 @@ function tick(dt) {
   for (const t of toasts) t.t -= dt;
   toasts = toasts.filter(t => t.t > 0);
 }
+// Each lighting costs more oil than the last. Once the cost exceeds what the lantern can hold,
+// the lamp is effectively locked until fuel capacity is upgraded.
+const lampNeed = l => T.lampFuelCost + l.lights * T.lampFuelStep;
+const lampLocked = l => lampNeed(l) > P.maxFuel - T.igniteCost;
 function tickLamps(dt) {
   const pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
   for (const l of lamps) {
@@ -694,14 +701,15 @@ function tickLamps(dt) {
     l.glow = approach(l.glow, active ? 1 : l.lit ? 0.2 : 0, dt * 2);
     if (!l.lit) {
       if (inPlayerBeam(fx, LAMP_FLAME_Y, 12)) {
-        l.kindle += dt;
+        l.kindle += T.fuelDrain * dt;   // oil poured into the wick
+        if (lampLocked(l) && !l.warned) { l.warned = true; toast('This wick needs more oil than your lantern can hold.', 2.8); }
         if (Math.random() < dt * 25) burst(fx, LAMP_FLAME_Y, 1, { color: '#ffcf7a', ang: -Math.PI / 2, spread: 0.6, smin: 20, smax: 80, lmin: 0.2, lmax: 0.4, add: true });
-        if (l.kindle >= T.lampKindleTime) {
-          l.lit = true; addShake(3);
+        if (l.kindle >= lampNeed(l)) {
+          l.lit = true; l.lights++; l.kindle = 0; l.charges = T.lampCharges; l.healT = 0; l.warned = false; addShake(3);
           burst(fx, LAMP_FLAME_Y, 24, { color: '#f6d27a', add: true, smin: 40, smax: 200, lmin: 0.3, lmax: 0.7 });
           if (!seenLamp) { seenLamp = true; toast('The wick-lamp catches. Stand in its warmth to mend.', 3); }
         }
-      } else l.kindle = Math.max(0, l.kindle - dt * 0.6);
+      } else l.kindle = Math.max(0, l.kindle - T.lampFade * dt);   // fades fast without light
     } else if (active) {
       const inZone = Math.hypot(pcx - fx, pcy - LAMP_ZONE_Y) < T.lampRadius && P.hazard <= 0;
       if (inZone && P.masks < P.maxMasks) {
@@ -710,7 +718,7 @@ function tickLamps(dt) {
         if (l.healT >= T.lampHealTime) {
           l.healT = 0; P.masks++; l.charges--; P.sy = 1 + 0.12 * T.squash;
           burst(pcx, pcy, 16, { color: '#f6d27a', add: true, smin: 40, smax: 160 });
-          if (l.charges <= 0) { toast('The lamp\'s oil is spent.', 1.8); burst(fx, LAMP_FLAME_Y, 10, { color: '#7a6a55', g: -40, smin: 10, smax: 50, lmin: 0.5, lmax: 1 }); }
+          if (l.charges <= 0) { l.lit = false; l.kindle = 0; toast(lampLocked(l) ? 'The lamp gutters out. Your lantern can no longer wake it.' : 'The lamp gutters out. Waking it again will take more oil.', 2.6); burst(fx, LAMP_FLAME_Y, 10, { color: '#7a6a55', g: -40, smin: 10, smax: 50, lmin: 0.5, lmax: 1 }); }
         }
       } else l.healT = Math.max(0, l.healT - dt * 0.5);
     }
@@ -928,13 +936,14 @@ function drawProps() {
     ctx.fillStyle = '#3a2c1c'; ctx.fillRect(px - 6, 20 * TILE - 4, 12, 4); ctx.fillRect(px - 7, fy + 8, 14, 3);
     ctx.strokeStyle = '#5a4630'; ctx.lineWidth = 1.5; ctx.strokeRect(px - 6, fy - 8, 12, 16);
     ctx.beginPath(); ctx.moveTo(px - 7, fy - 8); ctx.lineTo(px, fy - 14); ctx.lineTo(px + 7, fy - 8); ctx.stroke();
-    const k = clamp(l.kindle / T.lampKindleTime, 0, 1);
+    const k = clamp(l.kindle / lampNeed(l), 0, 1);
     if (l.lit && l.charges > 0) {
       const fl = 1 + 0.15 * Math.sin(time * 12 + l.x);
       ctx.fillStyle = '#f2a33a'; ctx.beginPath(); ctx.moveTo(px - 4, fy + 6); ctx.quadraticCurveTo(px, fy - 10 * fl * l.glow, px + 4, fy + 6); ctx.fill();
       ctx.fillStyle = '#ffe7a8'; ctx.beginPath(); ctx.moveTo(px - 2, fy + 6); ctx.quadraticCurveTo(px, fy - 4 * fl * l.glow, px + 2, fy + 6); ctx.fill();
     } else {
-      ctx.fillStyle = l.lit ? '#3a2a20' : `rgb(${120 + 135 * k},${60 + 120 * k},${30 + 40 * k})`; ctx.fillRect(px - 1.5, fy + 2, 3, 4);
+      const soot = l.lights > 0 ? 0.55 : 1; // spent wicks look charred until coaxed back
+      ctx.fillStyle = `rgb(${(120 * soot + 135 * k) | 0},${(60 * soot + 120 * k) | 0},${(30 * soot + 40 * k) | 0})`; ctx.fillRect(px - 1.5, fy + 2, 3, 4);
     }
   }
   // Beacons
@@ -988,7 +997,7 @@ function collectLights() {
   }
   for (const l of LORE) L.push({ x: (l.x + 0.5) * TILE, y: 20 * TILE - 18, r: 46, i: 0.55 });
   for (const l of lamps) {
-    const fx = (l.x + 0.5) * TILE, k = clamp(l.kindle / T.lampKindleTime, 0, 1);
+    const fx = (l.x + 0.5) * TILE, k = clamp(l.kindle / lampNeed(l), 0, 1);
     L.push({ x: fx, y: LAMP_FLAME_Y + 10, r: l.lit ? 40 + (T.lampRadius + 60) * l.glow + 4 * Math.sin(time * 8 + l.x) : 26 + 30 * k, i: l.lit ? 0.6 + 0.4 * l.glow : 0.5 });
   }
   for (const m of embers) L.push({ x: m.x + 3, y: m.y + 3, r: 34, i: 0.7 });
@@ -1062,6 +1071,17 @@ function render() {
       glow(fx, LAMP_FLAME_Y + 2, 46, `rgba(255,170,70,${0.35 * l.glow})`);
       if (l.charges > 0) { ctx.save(); ctx.translate(fx, 20 * TILE - 2); ctx.scale(1, 0.22); glow(0, 0, T.lampRadius, `rgba(255,180,90,${0.22 * l.glow})`); ctx.restore(); }
     }
+  }
+  // Kindling progress ring (with a capacity mark if the lamp is beyond the lantern's tank)
+  for (const l of lamps) {
+    if (l.lit || l.kindle <= 0) continue;
+    const fx = (l.x + 0.5) * TILE, need = lampNeed(l), a0 = -Math.PI / 2;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = lampLocked(l) ? 'rgba(200,90,60,.35)' : 'rgba(255,210,140,.2)';
+    ctx.beginPath(); ctx.arc(fx, LAMP_FLAME_Y, 15, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,214,140,.85)';
+    ctx.beginPath(); ctx.arc(fx, LAMP_FLAME_Y, 15, a0, a0 + Math.PI * 2 * clamp(l.kindle / need, 0, 1)); ctx.stroke();
+    if (lampLocked(l)) { const cap = a0 + Math.PI * 2 * (P.maxFuel - T.igniteCost) / need; ctx.strokeStyle = 'rgba(255,120,80,.9)'; ctx.beginPath(); ctx.moveTo(fx + Math.cos(cap) * 11, LAMP_FLAME_Y + Math.sin(cap) * 11); ctx.lineTo(fx + Math.cos(cap) * 19, LAMP_FLAME_Y + Math.sin(cap) * 19); ctx.stroke(); }
   }
   for (const m of embers) {
     const blink = m.life - m.t < 3 ? (Math.floor(m.t * 8) % 2 ? 0.3 : 1) : 1, x = m.x + 3, y = m.y + 3 + Math.sin(m.t * 5) * 1.5;
@@ -1191,11 +1211,11 @@ function drawHUD() {
   ctx.textAlign = 'left';
   for (let i = 0; i < p.maxMasks; i++) drawMaskIcon(30 + i * 26, 30, i < p.masks, p.maskLost > 0 && i === p.masks);
   // Lantern fuel
-  const x = 22, y = 50, w = 132, h = 10, f = p.fuel / 100;
+  const x = 22, y = 50, w = 132, h = 10, f = p.fuel / p.maxFuel;
   ctx.strokeStyle = '#8a6d44'; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h);
   ctx.fillStyle = p.burnout ? (Math.floor(time * 4) % 2 ? '#7a3b22' : '#5a2c1a') : p.beamOn ? '#ffd27a' : '#f2b347';
   ctx.fillRect(x + 2, y + 2, (w - 4) * f, h - 4);
-  if (p.burnout) { ctx.fillStyle = '#e9dcb8'; ctx.fillRect(x + 2 + (w - 4) * T.burnoutRelight / 100 - 1, y - 2, 2, h + 4); }
+  if (p.burnout) { ctx.fillStyle = '#e9dcb8'; ctx.fillRect(x + 2 + (w - 4) * T.burnoutRelight / p.maxFuel - 1, y - 2, 2, h + 4); }
   // Embers toward the next mask
   for (let i = 0; i < T.embersPerMask; i++) {
     const ex = x + w + 14 + i * 13, ey = y + 5;
