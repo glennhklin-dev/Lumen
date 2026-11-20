@@ -8,7 +8,18 @@
   html,body{margin:0;height:100%;background:#02060d;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
   #game{display:block;background:#050b16}
-  #touch{position:fixed;inset:0;pointer-events:none;display:none}
+  #touch{position:fixed;inset:0;pointer-events:none;display:none;-webkit-touch-callout:none}
+  .zone{position:absolute;top:0;bottom:0;pointer-events:auto;touch-action:none}
+  #moveZone{left:0;width:45%}
+  #aimZone{right:0;width:55%}
+  .stick{position:absolute;width:124px;height:124px;margin:-62px 0 0 -62px;border-radius:50%;box-sizing:border-box;
+         border:2px solid rgba(242,196,109,.4);background:rgba(242,196,109,.06);pointer-events:none;opacity:.35;transition:opacity .12s}
+  .stick.active{opacity:1;transition:none}
+  .knob{position:absolute;left:50%;top:50%;width:54px;height:54px;margin:-27px 0 0 -27px;border-radius:50%;box-sizing:border-box;
+        background:rgba(242,196,109,.28);border:2px solid rgba(242,196,109,.75)}
+  #aimStick{border-color:rgba(255,214,140,.55)}
+  #aimStick .knob{background:rgba(255,214,140,.5);box-shadow:0 0 18px rgba(255,200,110,.5)}
+  .tb{z-index:2}
   #touch.on{display:block}
   .tb{position:absolute;pointer-events:auto;width:62px;height:62px;border-radius:50%;box-sizing:border-box;
       background:rgba(242,196,109,.10);border:2px solid rgba(242,196,109,.45);color:#f2c46d;
@@ -33,13 +44,12 @@
 <div id="wrap"><canvas id="game" width="960" height="540"></canvas></div>
 
 <div id="touch">
-  <div class="tb" data-a="left"  style="left:16px;bottom:64px">◀</div>
-  <div class="tb" data-a="right" style="left:146px;bottom:64px">▶</div>
-  <div class="tb" data-a="up"    style="left:81px;bottom:126px">▲</div>
-  <div class="tb" data-a="down"  style="left:81px;bottom:4px">▼</div>
-  <div class="tb big" data-a="jump"  style="right:18px;bottom:28px">Jump</div>
-  <div class="tb big" data-a="flash" style="right:108px;bottom:72px">Light</div>
-  <div class="tb" data-a="interact"  style="right:32px;bottom:124px">E</div>
+  <div class="zone" id="moveZone"></div>
+  <div class="zone" id="aimZone"></div>
+  <div class="stick" id="moveStick"><div class="knob"></div></div>
+  <div class="stick" id="aimStick"><div class="knob"></div></div>
+  <div class="tb big" data-a="jump"  style="right:206px;bottom:30px">Jump</div>
+  <div class="tb" data-a="interact"  style="right:226px;bottom:128px">E</div>
   <div class="tb" data-a="pause"     style="right:16px;top:12px;width:46px;height:46px">II</div>
 </div>
 
@@ -126,7 +136,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -174,6 +184,43 @@ for (const b of touchEl.querySelectorAll('.tb')) {
   b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off);
   b.addEventListener('pointercancel', off); b.addEventListener('lostpointercapture', off);
 }
+// Twin floating joysticks (left = move, right = aim & hold the beam), Brawl Stars style.
+let touchAim = null;                       // analog beam angle while the aim stick is dragged
+const STICK_R = 52, MOVE_DZ = 0.28, AIM_DZ = 14;
+function makeStick(zoneId, stickId, home, onMove, onEnd, onStart) {
+  const zone = document.getElementById(zoneId), stick = document.getElementById(stickId), knob = stick.firstElementChild;
+  let id = null, ox = 0, oy = 0;
+  const place = (x, y) => { stick.style.left = x + 'px'; stick.style.top = y + 'px'; };
+  const knobAt = (dx, dy) => { knob.style.transform = `translate(${dx}px,${dy}px)`; };
+  const goHome = () => { const h = home(); place(h.x, h.y); knobAt(0, 0); stick.classList.remove('active'); };
+  zone.addEventListener('pointerdown', e => {
+    if (id !== null) return;
+    e.preventDefault(); id = e.pointerId; try { zone.setPointerCapture(id); } catch (_) {}
+    ox = e.clientX; oy = e.clientY; place(ox, oy); knobAt(0, 0); stick.classList.add('active');
+    pressed.start = true; onStart && onStart();
+  });
+  zone.addEventListener('pointermove', e => {
+    if (e.pointerId !== id) return;
+    e.preventDefault();
+    let dx = e.clientX - ox, dy = e.clientY - oy; const d = Math.hypot(dx, dy);
+    if (d > STICK_R) { dx *= STICK_R / d; dy *= STICK_R / d; }
+    knobAt(dx, dy); onMove(dx, dy, d);
+  });
+  const end = e => { if (e.pointerId !== id) return; id = null; onEnd(); goHome(); };
+  zone.addEventListener('pointerup', end); zone.addEventListener('pointercancel', end); zone.addEventListener('lostpointercapture', end);
+  addEventListener('resize', () => { if (id === null) goHome(); });
+  goHome();
+}
+makeStick('moveZone', 'moveStick', () => ({ x: 110, y: innerHeight - 110 }),
+  (dx, dy) => {
+    vHeld.left = dx < -STICK_R * MOVE_DZ; vHeld.right = dx > STICK_R * MOVE_DZ;
+    vHeld.up = dy < -STICK_R * 0.6; vHeld.down = dy > STICK_R * 0.6;
+  },
+  () => { vHeld.left = vHeld.right = vHeld.up = vHeld.down = false; });
+makeStick('aimZone', 'aimStick', () => ({ x: innerWidth - 110, y: innerHeight - 110 }),
+  (dx, dy, d) => { touchAim = d > AIM_DZ ? Math.atan2(dy, dx) : null; },
+  () => { vHeld.flash = false; touchAim = null; },
+  () => { vHeld.flash = true; pressed.flash = true; touchAim = null; });
 canvas.addEventListener('pointerdown', () => { if (state === 'title' || state === 'end' || state === 'log') pressed.start = true; });
 
 function pollPad() {
@@ -353,7 +400,7 @@ function inPlayerBeam(x, y, pad = 0) {
   const k = clamp(Math.round((clamp(diff, -half, half) + half) / (2 * half) * (RAYS - 1)), 0, RAYS - 1);
   return d <= p.rays[k].len + pad;
 }
-function aimTarget(p, ix, U, D) { let ax = ix; const ay = (D ? 1 : 0) - (U ? 1 : 0); if (!ax && !ay) ax = p.facing; return Math.atan2(ay, ax); }
+function aimTarget(p, ix, U, D) { if (touchAim !== null) return touchAim; let ax = ix; const ay = (D ? 1 : 0) - (U ? 1 : 0); if (!ax && !ay) ax = p.facing; return Math.atan2(ay, ax); }
 function sweepToward(p, target, dt) {
   let diff = angDiff(target, p.beamAng);
   if (Math.abs(diff) > Math.PI * 0.9) // reversing: sweep over the head, not through the floor
@@ -461,6 +508,7 @@ function tickPlayer(dt) {
 
   if (p.hurtLock > 0) ix = 0;
   if (ix !== 0) p.facing = ix;
+  else if (p.beamOn && touchAim !== null && Math.abs(Math.cos(touchAim)) > 0.3) p.facing = Math.cos(touchAim) > 0 ? 1 : -1;
 
   // Horizontal
   let a = p.grounded ? (ix ? T.groundAccel : T.groundDecel) : (ix ? T.airAccel : T.airDecel);
@@ -1251,7 +1299,7 @@ function drawLog() {
 const CONTROLS = [
   ['Move', '← →  /  A D'], ['Aim up / down', '↑ ↓  /  W S'], ['Jump (hold = higher)', 'Space / Z / K'],
   ['Lantern beam (hold)', 'X / J   — aim with ↑ ↓ ← →'], ['Read / turn mirror', 'E / C'],
-  ['Pause', 'Esc / P'], ['Feel tuning panel', 'T'],
+  ['Pause', 'Esc / P'], ['Feel tuning panel', 'T'], ['Touch', 'left stick move · right stick aim & hold light'],
 ];
 function drawControls(x, y) {
   ctx.font = `15px ${FONT}`;

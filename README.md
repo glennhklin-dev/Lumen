@@ -14,7 +14,7 @@ A 2D side-view action-exploration game set on the Sunken Coast. You are a lanter
 | Pause | Esc / P | Start |
 | Feel tuning panel | T | — |
 
-Touch buttons appear on touch devices.
+**Touch (phones/tablets):** twin floating joysticks. Put a thumb down anywhere on the left side and drag to move. Do the same on the right side to aim the lantern beam at any angle; it shines while you hold. A tap without dragging shines the way you face. Jump, E and pause are buttons.
 
 ## Feel systems
 
