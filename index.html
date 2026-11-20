@@ -38,9 +38,8 @@
   <div class="tb" data-a="up"    style="left:81px;bottom:126px">▲</div>
   <div class="tb" data-a="down"  style="left:81px;bottom:4px">▼</div>
   <div class="tb big" data-a="jump"  style="right:18px;bottom:28px">Jump</div>
-  <div class="tb big" data-a="flash" style="right:108px;bottom:72px">Flash</div>
+  <div class="tb big" data-a="flash" style="right:108px;bottom:72px">Light</div>
   <div class="tb" data-a="interact"  style="right:32px;bottom:124px">E</div>
-  <div class="tb" data-a="heal"      style="right:196px;bottom:22px">Heal</div>
   <div class="tb" data-a="pause"     style="right:16px;top:12px;width:46px;height:46px">II</div>
 </div>
 
@@ -76,17 +75,20 @@ const TDEF = [
   {k:'coyoteTime',   v:0.10, min:0,   max:0.3,  s:0.01, l:'Coyote time (s)'},
   {k:'jumpBuffer',   v:0.13, min:0,   max:0.3,  s:0.01, l:'Jump buffer (s)'},
   {k:'cornerNudge',  v:8,    min:0,   max:16,   s:1,    l:'Ceiling corner nudge (px)'},
-  {g:'Flash (attack)'},
-  {k:'attackCooldown',v:0.30,min:0.1, max:0.8,  s:0.01, l:'Cooldown (s)'},
-  {k:'attackActive', v:0.10, min:0.03,max:0.3,  s:0.01, l:'Active window (s)'},
-  {k:'attackBuffer', v:0.10, min:0,   max:0.3,  s:0.01, l:'Input buffer (s)'},
-  {k:'attackReach',  v:50,   min:24,  max:100,  s:1,    l:'Reach (px)'},
-  {k:'hitstop',      v:0.065,min:0,   max:0.2,  s:0.005,l:'Hit-stop on hit (s)'},
-  {k:'killHitstop',  v:0.12, min:0,   max:0.3,  s:0.005,l:'Hit-stop on kill (s)'},
-  {k:'enemyKnock',   v:340,  min:0,   max:800,  s:10,   l:'Enemy knockback'},
-  {k:'recoil',       v:170,  min:0,   max:500,  s:10,   l:'Player recoil on hit'},
-  {k:'pogoHeight',   v:2.4,  min:0.5, max:5,    s:0.05, l:'Down-flash pogo (tiles)'},
-  {k:'flareRadius',  v:70,   min:0,   max:200,  s:5,    l:'Flash light burst (px)'},
+  {g:'Lantern beam (hold Flash)'},
+  {k:'beamRange',    v:190,  min:60,  max:400,  s:5,    l:'Beam range (px)'},
+  {k:'beamHalfAngle',v:13,   min:3,   max:45,   s:1,    l:'Beam half-width (deg)'},
+  {k:'sweepSpeed',   v:420,  min:90,  max:1440, s:10,   l:'Sweep speed (deg/s)'},
+  {k:'beamDps',      v:3.5,  min:0.5, max:10,   s:0.1,  l:'Burn per second (Murkling = 1.6)'},
+  {k:'beamKnock',    v:170,  min:0,   max:700,  s:10,   l:'Push on enemies (px/s)'},
+  {k:'beamMoveMult', v:0.6,  min:0.2, max:1,    s:0.05, l:'Move speed while beaming ×'},
+  {k:'fuelDrain',    v:32,   min:5,   max:100,  s:1,    l:'Fuel drain (/s, tank 100)'},
+  {k:'fuelRegen',    v:18,   min:2,   max:80,   s:1,    l:'Fuel regen (/s)'},
+  {k:'regenDelay',   v:0.7,  min:0,   max:3,    s:0.05, l:'Regen delay after use (s)'},
+  {k:'igniteCost',   v:4,    min:0,   max:30,   s:1,    l:'Ignition cost'},
+  {k:'burnoutRelight',v:35,  min:0,   max:100,  s:1,    l:'Fuel needed after burnout'},
+  {k:'killHitstop',  v:0.08, min:0,   max:0.3,  s:0.005,l:'Hit-stop on kill (s)'},
+  {k:'pogoHeight',   v:2.4,  min:0.5, max:5,    s:0.05, l:'Pogo height (locked ability)'},
   {g:'Getting hurt'},
   {k:'hurtInvuln',   v:1.1,  min:0.2, max:2.5,  s:0.05, l:'Invulnerability (s)'},
   {k:'hurtKnockX',   v:280,  min:0,   max:700,  s:10,   l:'Knockback X'},
@@ -94,21 +96,19 @@ const TDEF = [
   {k:'hurtLock',     v:0.22, min:0,   max:0.6,  s:0.01, l:'Control lock (s)'},
   {k:'hurtHitstop',  v:0.14, min:0,   max:0.4,  s:0.01, l:'Hit-stop when hurt (s)'},
   {g:'Camera & juice'},
-  {k:'shakeHit',     v:3,    min:0,   max:15,   s:0.5,  l:'Shake: hit'},
+  {k:'shakeHit',     v:3,    min:0,   max:15,   s:0.5,  l:'Shake: beam rumble'},
   {k:'shakeKill',    v:6,    min:0,   max:20,   s:0.5,  l:'Shake: kill'},
   {k:'shakeHurt',    v:10,   min:0,   max:25,   s:0.5,  l:'Shake: hurt'},
   {k:'camLerp',      v:7,    min:1,   max:20,   s:0.5,  l:'Camera follow speed'},
   {k:'lookahead',    v:70,   min:0,   max:200,  s:5,    l:'Camera look-ahead (px)'},
   {k:'squash',       v:1,    min:0,   max:2,    s:0.1,  l:'Squash & stretch ×'},
-  {g:'Light & healing'},
+  {g:'Light'},
   {k:'lanternRadius',v:150,  min:80,  max:300,  s:5,    l:'Lantern radius (px)'},
   {k:'darkness',     v:0.88, min:0.5, max:1,    s:0.01, l:'Darkness opacity'},
-  {k:'healTime',     v:0.9,  min:0.2, max:2,    s:0.05, l:'Heal channel time (s)'},
-  {k:'oilPerHit',    v:0.34, min:0.05,max:1,    s:0.01, l:'Oil per hit (pips)'},
 ];
 const T = {};
 for (const d of TDEF) if (d.k) T[d.k] = d.v;
-const TKEY = 'lumen.tuning.v1';
+const TKEY = 'lumen.tuning.v2';
 try { const s = JSON.parse(localStorage.getItem(TKEY) || '{}'); for (const k in s) if (k in T) T[k] = +s[k]; } catch (e) {}
 const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } catch (e) {} };
 
@@ -132,7 +132,7 @@ function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Ma
    ===================================================================== */
 const ACTIONS = {
   left: ['ArrowLeft', 'KeyA'], right: ['ArrowRight', 'KeyD'], up: ['ArrowUp', 'KeyW'], down: ['ArrowDown', 'KeyS'],
-  jump: ['Space', 'KeyZ', 'KeyK'], flash: ['KeyX', 'KeyJ'], interact: ['KeyE', 'KeyC'], heal: ['KeyF', 'KeyL'],
+  jump: ['Space', 'KeyZ', 'KeyK'], flash: ['KeyX', 'KeyJ'], interact: ['KeyE', 'KeyC'],
   pause: ['Escape', 'KeyP'], tune: ['KeyT'], start: ['Enter'],
 };
 const codeTo = {}; for (const a in ACTIONS) for (const c of ACTIONS[a]) codeTo[c] = a;
@@ -171,7 +171,7 @@ function pollPad() {
     const ax = gp.axes[0] || 0, ay = gp.axes[1] || 0, b = i => gp.buttons[i] && gp.buttons[i].pressed;
     now.left = ax < -0.4 || b(14); now.right = ax > 0.4 || b(15);
     now.up = ay < -0.5 || b(12); now.down = ay > 0.5 || b(13);
-    now.jump = b(0); now.flash = b(2); now.heal = b(1); now.interact = b(3);
+    now.jump = b(0); now.flash = b(2); now.interact = b(3);
     now.pause = b(9); now.start = b(9) || b(0);
   }
   for (const a in ACTIONS) { const v = !!now[a]; if (v && !pHeld[a]) pressed[a] = true; pHeld[a] = v; }
@@ -216,7 +216,7 @@ const LORE = [
   { x: 68, title: "Keeper's Log IV — Every Light Has a Name",
     text: "Each lighthouse has its own \"characteristic\": a pattern of flashes, such as two quick flashes every ten seconds, so sailors can tell which light they are seeing. By day, painted stripes and colours called daymarks do the same job." },
   { x: 92, title: "Keeper's Log V — Angles",
-    text: "The law of reflection: light leaves a mirror at the same angle it arrived. Set a mirror at 45 degrees and a beam turns a perfect corner.\nTurn the mirrors with [E], or strike them with your Flash. Lead the beam to the crystal." },
+    text: "The law of reflection: light leaves a mirror at the same angle it arrived. Set a mirror at 45 degrees and a beam turns a perfect corner.\nTurn the mirrors with [E]. Lead the beam to the crystal." },
 ];
 const MIRROR_DEF = [{ x: 100, y: 13, d: '/' }, { x: 100, y: 17, d: '/' }, { x: 108, y: 17, d: '\\' }];
 const SRC = { x: 93, y: 13 }, CRY = { x: 108, y: 10 };
@@ -226,18 +226,19 @@ const MURK_DEF = [25, 61, 66, 104, 113];
 /* =====================================================================
    World state
    ===================================================================== */
+let seenBurnout = false;
 let state = 'title', time = 0, freeze = 0, shake = 0, fade = 0, stateT = 0;
 let P, enemies, beacons, mirrors, particles, toasts, crystal, door, checkpoint, beam, logOpen, stats;
 const cam = { x: 0, y: 0, look: 0 };
 
 function newPlayer() {
   return { x: SPAWN.x, y: SPAWN.y, w: 18, h: 28, vx: 0, vy: 0, facing: 1, grounded: false, coyote: 0, jumpBuf: 0, jumping: false,
-    atkT: 0, atkCD: 0, atkBuf: 0, atkDir: 'side', atkHit: new Set(), atkVis: 0, atkFacing: 1,
-    masks: 5, maxMasks: 5, oil: 0, inv: 0, hurtLock: 0, heal: 0, hazard: 0, flare: 0, sx: 1, sy: 1,
+    fuel: 100, beamOn: false, beamAng: 0, burnout: false, regenT: 0, rays: null, beamO: null, pogoCD: 0,
+    masks: 5, maxMasks: 5, inv: 0, hurtLock: 0, hazard: 0, sx: 1, sy: 1,
     dropT: 0, dust: 0, anim: 0, lastSafe: { x: SPAWN.x, y: SPAWN.y }, maskLost: 0 };
 }
 function resetEnemies() {
-  enemies = MURK_DEF.map(x => ({ x: x * TILE + 4, y: 20 * TILE - 20, w: 24, h: 20, vx: 0, vy: 0, dir: -1, hp: 2,
+  enemies = MURK_DEF.map(x => ({ x: x * TILE + 4, y: 20 * TILE - 20, w: 24, h: 20, vx: 0, vy: 0, dir: -1, hp: 1.6,
     stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0, dead: false, t: Math.random() * 10, grounded: false }));
 }
 function newGame() {
@@ -311,16 +312,43 @@ const addShake = s => { shake = Math.max(shake, s); };
 /* =====================================================================
    Player
    ===================================================================== */
-function attackBox(p) {
-  const R = T.attackReach, cx = p.x + p.w / 2, cy = p.y + p.h / 2;
-  if (p.atkDir === 'up') return { x: cx - 26, y: p.y - R, w: 52, h: R + 8 };
-  if (p.atkDir === 'down') return { x: cx - 26, y: p.y + p.h - 8, w: 52, h: R + 8 };
-  return p.atkFacing > 0 ? { x: p.x + p.w - 6, y: cy - 22, w: R + 6, h: 44 } : { x: p.x - R, y: cy - 22, w: R + 6, h: 44 };
+// Pogo is kept for a later unlock (e.g. a lens upgrade). Off in the base game.
+const ABILITIES = { pogo: false };
+const RAYS = 11;
+const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
+function beamOrigin(p) { return { x: p.x + p.w / 2 + Math.cos(p.beamAng) * 10, y: p.y + p.h * 0.42 + Math.sin(p.beamAng) * 6 }; }
+function castRay(ox, oy, a, max) {
+  const dx = Math.cos(a), dy = Math.sin(a);
+  for (let d = 0; d < max; d += 4) if (isSolid(Math.floor((ox + dx * d) / TILE), Math.floor((oy + dy * d) / TILE))) return d;
+  return max;
+}
+function updateBeamRays(p) {
+  const o = beamOrigin(p), half = T.beamHalfAngle * Math.PI / 180;
+  p.beamO = o; p.rays = [];
+  for (let i = 0; i < RAYS; i++) { const a = p.beamAng - half + (2 * half * i) / (RAYS - 1); p.rays.push({ a, len: castRay(o.x, o.y, a, T.beamRange) }); }
+}
+// Is a point inside the player's (wall-occluded) light cone? pad grows the test for body size.
+function inPlayerBeam(x, y, pad = 0) {
+  const p = P; if (!p || !p.beamOn || !p.rays) return false;
+  const o = p.beamO, dx = x - o.x, dy = y - o.y, d = Math.hypot(dx, dy);
+  if (d > T.beamRange + pad) return false;
+  const half = T.beamHalfAngle * Math.PI / 180, diff = angDiff(Math.atan2(dy, dx), p.beamAng);
+  if (Math.abs(diff) > half + (d > 1 ? Math.atan(pad / d) : Math.PI)) return false;
+  const k = clamp(Math.round((clamp(diff, -half, half) + half) / (2 * half) * (RAYS - 1)), 0, RAYS - 1);
+  return d <= p.rays[k].len + pad;
+}
+function aimTarget(p, ix, U, D) { let ax = ix; const ay = (D ? 1 : 0) - (U ? 1 : 0); if (!ax && !ay) ax = p.facing; return Math.atan2(ay, ax); }
+function sweepToward(p, target, dt) {
+  let diff = angDiff(target, p.beamAng);
+  if (Math.abs(diff) > Math.PI * 0.9) // reversing: sweep over the head, not through the floor
+    diff = Math.cos(p.beamAng) >= 0 ? (diff > 0 ? diff - 2 * Math.PI : diff) : (diff < 0 ? diff + 2 * Math.PI : diff);
+  const step = T.sweepSpeed * Math.PI / 180 * dt;
+  p.beamAng = angDiff(p.beamAng + clamp(diff, -step, step), 0);
 }
 function hurtPlayer(fromX) {
   const p = P;
   if (p.inv > 0 || p.hazard > 0) return;
-  p.masks--; p.maskLost = 0.6; p.heal = 0;
+  p.masks--; p.maskLost = 0.6; p.beamOn = false;
   p.inv = T.hurtInvuln; p.hurtLock = T.hurtLock;
   const dir = Math.sign(p.x + p.w / 2 - fromX) || -p.facing;
   p.vx = dir * T.hurtKnockX; p.vy = -T.hurtKnockY; p.jumping = false; p.grounded = false;
@@ -341,26 +369,26 @@ function die() {
   state = 'dying'; stateT = 0;
 }
 function respawnAtCheckpoint() {
-  const keepOil = P.oil;
-  P = newPlayer(); P.oil = keepOil;
+  P = newPlayer();
   P.x = checkpoint.x; P.y = checkpoint.y; P.lastSafe = { ...checkpoint };
   resetEnemies(); snapCam(); clearPressed();
   state = 'play'; fade = 1;
 }
-function hitEnemy(e, p) {
-  e.hp--; e.flash = 0.1; e.stun = 0.28; e.wind = 0;
-  const dir = p.atkDir === 'side' ? p.atkFacing : Math.sign(e.x + e.w / 2 - (p.x + p.w / 2)) || p.facing;
-  e.vx = dir * T.enemyKnock * (p.atkDir === 'side' ? 1 : 0.5);
-  e.vy = p.atkDir === 'up' ? -320 : p.atkDir === 'down' ? 120 : -140;
-  p.oil = Math.min(3, p.oil + T.oilPerHit);
+function burnEnemy(e, p, dt) {
+  const dx = Math.cos(p.beamAng), dy = Math.sin(p.beamAng), lim = T.beamKnock;
+  e.hp -= T.beamDps * dt; e.flash = 0.05; e.wind = 0; e.stun = Math.max(e.stun, 0.15);
+  e.vx = clamp(e.vx + dx * lim * 8 * dt, -lim, lim);   // pushed along the beam
+  e.vy += dy * lim * 6 * dt;                            // lifted / pinned (weaker than gravity)
+  addShake(T.shakeHit * 0.5);
   const ex = e.x + e.w / 2, ey = e.y + e.h / 2;
-  burst(ex, ey, 10, { color: '#ffe3a1', smin: 120, smax: 320, lmin: 0.12, lmax: 0.3, add: true, zmin: 1.5, zmax: 3 });
+  if (Math.random() < dt * 30) burst(ex, ey, 1, { color: '#ffe3a1', ang: p.beamAng, spread: 0.8, smin: 60, smax: 200, lmin: 0.15, lmax: 0.3, add: true });
+  if (Math.random() < dt * 20) burst(ex, ey, 1, { color: '#1b1533', g: -80, smin: 10, smax: 60, lmin: 0.3, lmax: 0.6, zmin: 2, zmax: 4 });
   if (e.hp <= 0) {
     e.dead = true; stats.kills++;
     freeze = Math.max(freeze, T.killHitstop); addShake(T.shakeKill);
     burst(ex, ey, 26, { color: '#1b1533', smin: 40, smax: 200, lmin: 0.4, lmax: 0.9, zmin: 2, zmax: 6, g: -60 });
     burst(ex, ey, 14, { color: '#cfc4ff', smin: 60, smax: 240, lmin: 0.2, lmax: 0.5, add: true });
-  } else { freeze = Math.max(freeze, T.hitstop); addShake(T.shakeHit); }
+  }
 }
 function rotateMirror(m) {
   m.d = m.d === '/' ? '\\' : '/';
@@ -371,12 +399,12 @@ function tickPlayer(dt) {
   const p = P;
   p.anim += dt;
   p.sx += (1 - p.sx) * Math.min(1, dt * 14); p.sy += (1 - p.sy) * Math.min(1, dt * 14);
-  p.inv -= dt; p.hurtLock -= dt; p.atkCD -= dt; p.atkVis -= dt; p.dropT -= dt; p.maskLost -= dt;
-  p.flare = Math.max(0, p.flare - dt * 4.5);
+  p.inv -= dt; p.hurtLock -= dt; p.dropT -= dt; p.maskLost -= dt; p.pogoCD -= dt;
 
   if (p.hazard > 0) {
     const prev = p.hazard; p.hazard -= dt;
-    if (prev > 0.35 && p.hazard <= 0.35) { p.x = p.lastSafe.x; p.y = p.lastSafe.y; p.vx = p.vy = 0; p.jumpBuf = 0; p.atkBuf = 0; }
+    if (prev > 0.35 && p.hazard <= 0.35) { p.x = p.lastSafe.x; p.y = p.lastSafe.y; p.vx = p.vy = 0; p.jumpBuf = 0; }
+    p.beamOn = false; p.rays = null;
     clearPressed();
     return;
   }
@@ -384,29 +412,36 @@ function tickPlayer(dt) {
   const L = isHeld('left'), Rt = isHeld('right'), U = isHeld('up'), D = isHeld('down'), JH = isHeld('jump');
   let ix = (Rt ? 1 : 0) - (L ? 1 : 0);
   if (take('jump')) p.jumpBuf = T.jumpBuffer; else p.jumpBuf -= dt;
-  if (take('flash')) p.atkBuf = T.attackBuffer; else p.atkBuf -= dt;
+  take('flash');
 
-  // Healing: hold to spend 1 oil pip for 1 mask. Grounded and still.
-  const canHeal = isHeld('heal') && p.grounded && p.oil >= 1 && p.masks < p.maxMasks && p.atkT <= 0 && p.hurtLock <= 0;
-  if (canHeal) {
-    p.heal += dt; ix = 0;
-    if (Math.random() < dt * 40) { const a = rnd(0, 6.28); particles.push({ x: p.x + p.w / 2 + Math.cos(a) * 40, y: p.y + p.h / 2 + Math.sin(a) * 40, vx: -Math.cos(a) * 90, vy: -Math.sin(a) * 90, life: 0.4, max: 0.4, size: 2, color: '#f6d27a', g: 0, add: true, drag: 0 }); }
-    if (p.heal >= T.healTime) {
-      p.heal = 0; p.oil -= 1; p.masks++; p.sy = 1 + 0.15 * T.squash; p.sx = 1 - 0.1 * T.squash;
-      burst(p.x + p.w / 2, p.y + p.h / 2, 20, { color: '#f6d27a', smin: 60, smax: 200, add: true });
+  // Lantern beam: hold to pour light, burning fuel. Fuel recovers after a short rest.
+  const want = isHeld('flash') && p.hurtLock <= 0 && !p.burnout;
+  const target = aimTarget(p, ix, U, D);
+  if (want && !p.beamOn) {
+    if (p.fuel > T.igniteCost) {
+      p.beamOn = true; p.fuel -= T.igniteCost; p.beamAng = target;
+      const o = beamOrigin(p); addShake(1.5);
+      burst(o.x, o.y, 10, { color: '#ffe3a1', ang: target, spread: 0.5, smin: 80, smax: 260, lmin: 0.15, lmax: 0.3, add: true });
     }
-  } else p.heal = 0;
-  if (p.hurtLock > 0) ix = 0;
-
-  // Flash attack
-  if (p.atkBuf > 0 && p.atkCD <= 0 && p.hurtLock <= 0) {
-    p.atkBuf = 0; p.atkCD = T.attackCooldown; p.atkT = T.attackActive; p.atkVis = 0.16; p.heal = 0;
-    p.atkDir = U ? 'up' : (D && !p.grounded ? 'down' : 'side');
-    if (ix !== 0) p.facing = ix;
-    p.atkFacing = p.facing; p.atkHit = new Set(); p.flare = 1;
   }
+  if (p.beamOn && !want) p.beamOn = false;
+  if (p.beamOn) {
+    sweepToward(p, target, dt);
+    p.fuel -= T.fuelDrain * dt; p.regenT = T.regenDelay;
+    if (p.fuel <= 0) {
+      p.fuel = 0; p.beamOn = false; p.burnout = true;
+      const o = beamOrigin(p); burst(o.x, o.y, 14, { color: '#7a6a55', g: -40, smin: 20, smax: 80, lmin: 0.4, lmax: 0.9 });
+      if (!seenBurnout) { seenBurnout = true; toast('Your lantern gutters. Let the flame breathe.', 2.4); }
+    }
+  } else {
+    p.regenT -= dt;
+    if (p.regenT <= 0) p.fuel = Math.min(100, p.fuel + T.fuelRegen * dt);
+  }
+  if (p.burnout && p.fuel >= T.burnoutRelight) p.burnout = false;
+  if (p.burnout && isHeld('flash') && Math.random() < dt * 12) { const o = beamOrigin(p); burst(o.x, o.y, 1, { color: '#a08060', g: -30, smin: 10, smax: 40, lmin: 0.3, lmax: 0.6 }); }
 
-  if (ix !== 0 && p.atkT <= 0) p.facing = ix;
+  if (p.hurtLock > 0) ix = 0;
+  if (ix !== 0) p.facing = ix;
 
   // Horizontal
   let a = p.grounded ? (ix ? T.groundAccel : T.groundDecel) : (ix ? T.airAccel : T.airDecel);
@@ -415,11 +450,11 @@ function tickPlayer(dt) {
     if (p.grounded && Math.abs(p.vx) > 140 && Math.random() < 0.5) dust(p.x + p.w / 2, p.y + p.h, 1, ix > 0 ? -Math.PI * 0.85 : -Math.PI * 0.15);
   }
   if (p.hurtLock > 0) a = 500;
-  p.vx = approach(p.vx, ix * T.runSpeed, a * dt);
+  p.vx = approach(p.vx, ix * T.runSpeed * (p.beamOn ? T.beamMoveMult : 1), a * dt);
 
   // Jump (coyote + buffer), drop-through hidden walkways with Down+Jump
   if (p.grounded) p.coyote = T.coyoteTime; else p.coyote -= dt;
-  if (p.jumpBuf > 0 && p.coyote > 0 && p.heal <= 0 && p.hurtLock <= 0) {
+  if (p.jumpBuf > 0 && p.coyote > 0 && p.hurtLock <= 0) {
     const fl = Math.floor((p.y + p.h + 1) / TILE), l = Math.floor(p.x / TILE), r = Math.floor((p.x + p.w - 0.01) / TILE);
     const onPlat = p.grounded && (isPlatform(l, fl) || isPlatform(r, fl));
     if (D && onPlat && !isSolid(l, fl) && !isSolid(r, fl)) { p.dropT = 0.22; p.y += 2; }
@@ -471,21 +506,15 @@ function tickPlayer(dt) {
     if (p.y > H * TILE) { hazardHit(); return; }
   }
 
-  // Attack resolution (active window)
-  if (p.atkT > 0) {
-    p.atkT -= dt;
-    const box = attackBox(p);
+  // Beam resolution: burn and push everything in the cone
+  if (p.beamOn) {
+    updateBeamRays(p);
     for (const e of enemies) {
-      if (e.dead || p.atkHit.has(e) || !overlap(box, e)) continue;
-      p.atkHit.add(e); hitEnemy(e, p);
-      if (p.atkDir === 'down') { p.vy = -pogoVel(); p.jumping = false; p.sy = 1 + 0.2 * T.squash; p.sx = 1 - 0.15 * T.squash; }
-      else if (p.atkDir === 'side') p.vx = -p.atkFacing * T.recoil;
+      if (e.dead || !inPlayerBeam(e.x + e.w / 2, e.y + e.h / 2, 12)) continue;
+      burnEnemy(e, p, dt);
+      if (ABILITIES.pogo && !p.grounded && Math.sin(p.beamAng) > 0.7 && p.pogoCD <= 0) { p.vy = -pogoVel(); p.jumping = false; p.pogoCD = 0.35; }
     }
-    for (const m of mirrors) {
-      if (p.atkHit.has(m)) continue;
-      if (overlap(box, { x: m.x * TILE + 4, y: m.y * TILE + 4, w: TILE - 8, h: TILE - 8 })) { p.atkHit.add(m); rotateMirror(m); freeze = Math.max(freeze, 0.04); addShake(2); }
-    }
-  }
+  } else p.rays = null;
 }
 
 /* =====================================================================
@@ -576,7 +605,7 @@ function tick(dt) {
   // Lantern reveals hidden walkways
   const lr = lanternR() * 0.92, pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
   for (const h of hidden) {
-    h.lit = P.hazard <= 0 && Math.hypot((h.x + 0.5) * TILE - pcx, (h.y + 0.5) * TILE - pcy) < lr;
+    h.lit = P.hazard <= 0 && (Math.hypot((h.x + 0.5) * TILE - pcx, (h.y + 0.5) * TILE - pcy) < lr || inPlayerBeam((h.x + 0.5) * TILE, (h.y + 0.5) * TILE, 10));
     h.a = approach(h.a, h.lit ? 1 : 0, dt * 7);
   }
 
@@ -635,9 +664,10 @@ function tickParticles(dt) {
   if (particles.length > 600) particles.splice(0, particles.length - 600);
 }
 function lanternR() {
-  const p = P; let r = T.lanternRadius * (1 + 0.03 * Math.sin(time * 13) + 0.02 * Math.sin(time * 7.3)) + T.flareRadius * p.flare;
+  const p = P; let r = T.lanternRadius * (1 + 0.03 * Math.sin(time * 13) + 0.02 * Math.sin(time * 7.3));
+  if (p.beamOn) r *= 0.8;          // light is focused into the beam
+  if (p.burnout) r *= 0.7 + 0.04 * Math.sin(time * 20);
   if (p.inv > 0 && p.hurtLock > -0.3) r *= 0.75 + 0.25 * Math.random();
-  if (p.heal > 0) r *= 1 + 0.25 * (p.heal / T.healTime);
   return r;
 }
 
@@ -736,8 +766,9 @@ function drawPlayer() {
   ctx.restore();
   // lantern (outside scale so it swings independently)
   const la = Math.sin(p.anim * 6) * 0.15 * (p.grounded ? clamp(Math.abs(p.vx) / T.runSpeed, 0, 1) : 0.4) - clamp(p.vx / 900, -0.4, 0.4);
-  const hx = fx + f * 11, hy = fy - 16 * p.sy;
-  const lx = hx + Math.sin(la) * 8, ly = hy + Math.cos(la) * 8;
+  let hx = fx + f * 11, hy = fy - 16 * p.sy;
+  let lx = hx + Math.sin(la) * 8, ly = hy + Math.cos(la) * 8;
+  if (p.beamOn && p.beamO) { hx = fx + Math.cos(p.beamAng) * 5; hy = fy - 16; lx = p.beamO.x; ly = p.beamO.y - 5; }
   ctx.strokeStyle = '#6b5a3a'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(hx, hy); ctx.lineTo(lx, ly); ctx.stroke();
   ctx.fillStyle = '#4a3b22'; ctx.fillRect(lx - 4, ly, 8, 2); ctx.fillRect(lx - 4, ly + 9, 8, 2);
   ctx.fillStyle = '#ffd98a'; ctx.fillRect(lx - 3, ly + 2, 6, 7);
@@ -892,6 +923,11 @@ function render() {
     g.addColorStop(0, `rgba(0,0,0,${l.i})`); g.addColorStop(0.55, `rgba(0,0,0,${l.i * 0.75})`); g.addColorStop(1, 'rgba(0,0,0,0)');
     dctx.fillStyle = g; dctx.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
   }
+  if (P.beamOn && P.rays && state !== 'dying') {
+    const o = P.beamO, g = dctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, T.beamRange);
+    g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(0.7, 'rgba(0,0,0,.85)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    dctx.fillStyle = g; beamPath(dctx, P); dctx.fill();
+  }
   if (beam.pts.length > 1) {
     dctx.lineCap = 'round'; dctx.lineJoin = 'round';
     dctx.strokeStyle = 'rgba(0,0,0,.35)'; dctx.lineWidth = 90; strokePts(dctx, beam.pts);
@@ -905,7 +941,7 @@ function render() {
   // Additive glow pass
   ctx.save(); ctx.translate(ox, oy);
   ctx.globalCompositeOperation = 'lighter';
-  if (state !== 'dying' && P._lx) glow(P._lx, P._ly, 60 + 30 * P.flare, `rgba(255,190,90,${0.22 + 0.25 * P.flare})`);
+  if (state !== 'dying' && P._lx) glow(P._lx, P._ly, P.beamOn ? 50 : 60, `rgba(255,190,90,${P.burnout ? 0.1 : 0.22})`);
   for (const b of beacons) if (b.lit) glow((b.x + 0.5) * TILE, 20 * TILE - 40, 70, `rgba(255,170,70,${0.3 * b.glow})`);
   glow((CRY.x + 0.5) * TILE, (CRY.y + 0.5) * TILE, 50, `rgba(140,220,255,${0.1 + 0.4 * crystal.charge})`);
   if (beam.pts.length > 1) { ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255,200,110,.14)'; ctx.lineWidth = 22; strokePts(ctx, beam.pts); }
@@ -914,10 +950,8 @@ function render() {
   for (let x = 0; x < W; x++) if (tileAt(x, 21) === '~') {
     ctx.beginPath(); for (let i = 0; i <= 8; i++) { const wx = x * TILE + i * 4, wy = 21 * TILE + 4 + Math.sin(time * 2.4 + wx * 0.08) * 1.6; i ? ctx.lineTo(wx, wy) : ctx.moveTo(wx, wy); } ctx.stroke();
   }
-  // Flash arc
-  if (P.atkVis > 0 && state !== 'dying') drawFlash();
-  // Heal ring
-  if (P.heal > 0) { ctx.strokeStyle = 'rgba(246,210,122,.8)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(P.x + P.w / 2, P.y + P.h / 2, 22, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * P.heal / T.healTime); ctx.stroke(); }
+  // Lantern beam
+  if (P.beamOn && P.rays && state !== 'dying') drawBeam();
   for (const q of particles) if (q.add) { ctx.globalAlpha = clamp(q.life / q.max, 0, 1); ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, 7); ctx.fill(); }
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
@@ -942,17 +976,21 @@ function render() {
   if (state === 'end' && stateT > 0) drawEnd();
 }
 function glow(x, y, r, col) { const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2); }
-function drawFlash() {
-  const p = P, k = clamp(p.atkVis / 0.16, 0, 1), cx = p.x + p.w / 2, cy = p.y + p.h / 2, R = T.attackReach;
-  const ang = p.atkDir === 'up' ? -Math.PI / 2 : p.atkDir === 'down' ? Math.PI / 2 : (p.atkFacing > 0 ? 0 : Math.PI);
-  const r = 14 + R * (1.15 - k * 0.35);
-  ctx.save(); ctx.translate(cx, cy); ctx.rotate(ang);
-  const g = ctx.createRadialGradient(0, 0, r * 0.3, 0, 0, r);
-  g.addColorStop(0, 'rgba(255,240,190,0)'); g.addColorStop(0.7, `rgba(255,214,120,${0.7 * k})`); g.addColorStop(1, 'rgba(255,214,120,0)');
-  ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, r, -1.0, 1.0); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = `rgba(255,248,220,${k})`; ctx.lineWidth = 3 * k + 1;
-  ctx.beginPath(); ctx.arc(0, 0, r * 0.88, -0.85, 0.85); ctx.stroke();
-  ctx.restore();
+function beamPath(c, p) {
+  const o = p.beamO; c.beginPath(); c.moveTo(o.x, o.y);
+  for (const r of p.rays) c.lineTo(o.x + Math.cos(r.a) * r.len, o.y + Math.sin(r.a) * r.len);
+  c.closePath();
+}
+function drawBeam() {
+  const p = P, o = p.beamO, fl = p.fuel < 20 ? 0.55 + 0.45 * Math.random() : 0.92 + 0.08 * Math.sin(time * 40);
+  const g = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, T.beamRange);
+  g.addColorStop(0, `rgba(255,236,180,${0.7 * fl})`); g.addColorStop(0.6, `rgba(255,200,110,${0.3 * fl})`); g.addColorStop(1, 'rgba(255,190,90,0)');
+  ctx.fillStyle = g; beamPath(ctx, p); ctx.fill();
+  const mid = p.rays[(RAYS - 1) >> 1];
+  ctx.strokeStyle = `rgba(255,248,225,${0.45 * fl})`; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + Math.cos(mid.a) * mid.len * 0.85, o.y + Math.sin(mid.a) * mid.len * 0.85); ctx.stroke();
+  for (const r of [p.rays[0], mid, p.rays[RAYS - 1]])
+    if (r.len < T.beamRange - 2) glow(o.x + Math.cos(r.a) * r.len, o.y + Math.sin(r.a) * r.len, 18, `rgba(255,210,130,${0.3 * fl})`);
 }
 function drawPrompts() {
   if (state !== 'play') return;
@@ -994,12 +1032,12 @@ function drawHUD() {
   const p = P;
   ctx.textAlign = 'left';
   for (let i = 0; i < p.maxMasks; i++) drawMaskIcon(30 + i * 26, 30, i < p.masks, p.maskLost > 0 && i === p.masks);
-  for (let i = 0; i < 3; i++) {
-    const x = 22 + i * 22, y = 50, fill = clamp(p.oil - i, 0, 1);
-    ctx.strokeStyle = '#8a6d44'; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, 14, 20);
-    if (fill > 0) { ctx.fillStyle = fill >= 1 ? '#f2b347' : '#a7772e'; ctx.fillRect(x + 2, y + 2 + 16 * (1 - fill), 10, 16 * fill); }
-  }
-  if (p.oil >= 1 && p.masks < p.maxMasks) { ctx.fillStyle = 'rgba(233,220,184,.55)'; ctx.font = `12px ${FONT}`; ctx.fillText('hold F to heal', 92, 64); }
+  // Lantern fuel
+  const x = 22, y = 50, w = 132, h = 10, f = p.fuel / 100;
+  ctx.strokeStyle = '#8a6d44'; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = p.burnout ? (Math.floor(time * 4) % 2 ? '#7a3b22' : '#5a2c1a') : p.beamOn ? '#ffd27a' : '#f2b347';
+  ctx.fillRect(x + 2, y + 2, (w - 4) * f, h - 4);
+  if (p.burnout) { ctx.fillStyle = '#e9dcb8'; ctx.fillRect(x + 2 + (w - 4) * T.burnoutRelight / 100 - 1, y - 2, 2, h + 4); }
 }
 function panel(x, y, w, h) {
   ctx.fillStyle = 'rgba(5,11,22,.92)'; ctx.fillRect(x, y, w, h);
@@ -1025,7 +1063,7 @@ function drawLog() {
 }
 const CONTROLS = [
   ['Move', '← →  /  A D'], ['Aim up / down', '↑ ↓  /  W S'], ['Jump (hold = higher)', 'Space / Z / K'],
-  ['Flash', 'X / J   (↑ up, ↓ down in air = pogo)'], ['Read / turn mirror', 'E / C'], ['Heal (hold)', 'F / L'],
+  ['Lantern beam (hold)', 'X / J   — aim with ↑ ↓ ← →'], ['Read / turn mirror', 'E / C'],
   ['Pause', 'Esc / P'], ['Feel tuning panel', 'T'],
 ];
 function drawControls(x, y) {
