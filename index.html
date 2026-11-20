@@ -76,8 +76,8 @@ const TDEF = [
   {k:'jumpBuffer',   v:0.13, min:0,   max:0.3,  s:0.01, l:'Jump buffer (s)'},
   {k:'cornerNudge',  v:8,    min:0,   max:16,   s:1,    l:'Ceiling corner nudge (px)'},
   {g:'Lantern beam (hold Flash)'},
-  {k:'beamRange',    v:190,  min:60,  max:400,  s:5,    l:'Beam range (px)'},
-  {k:'beamHalfAngle',v:13,   min:3,   max:45,   s:1,    l:'Beam half-width (deg)'},
+  {k:'beamRange',    v:220,  min:60,  max:400,  s:5,    l:'Beam range (px)'},
+  {k:'beamHalfAngle',v:20,   min:3,   max:45,   s:1,    l:'Beam half-width (deg)'},
   {k:'sweepSpeed',   v:420,  min:90,  max:1440, s:10,   l:'Sweep speed (deg/s)'},
   {k:'beamDps',      v:3.5,  min:0.5, max:10,   s:0.1,  l:'Burn per second (Murkling = 1.6)'},
   {k:'beamKnock',    v:170,  min:0,   max:700,  s:10,   l:'Push on enemies (px/s)'},
@@ -102,13 +102,20 @@ const TDEF = [
   {k:'camLerp',      v:7,    min:1,   max:20,   s:0.5,  l:'Camera follow speed'},
   {k:'lookahead',    v:70,   min:0,   max:200,  s:5,    l:'Camera look-ahead (px)'},
   {k:'squash',       v:1,    min:0,   max:2,    s:0.1,  l:'Squash & stretch ×'},
+  {g:'Wick-lamps & embers'},
+  {k:'lampKindleTime',v:1.2, min:0.2, max:4,    s:0.1,  l:'Beam time to light a lamp (s)'},
+  {k:'lampRadius',   v:85,   min:40,  max:200,  s:5,    l:'Lamp warm-zone radius (px)'},
+  {k:'lampHealTime', v:2.5,  min:0.5, max:6,    s:0.1,  l:'Seconds per mask in warm zone'},
+  {k:'lampCharges',  v:2,    min:1,   max:5,    s:1,    l:'Masks a lamp holds'},
+  {k:'emberChance',  v:0.6,  min:0,   max:1,    s:0.05, l:'Ember drop chance'},
+  {k:'embersPerMask',v:3,    min:1,   max:6,    s:1,    l:'Embers per mask'},
   {g:'Light'},
   {k:'lanternRadius',v:150,  min:80,  max:300,  s:5,    l:'Lantern radius (px)'},
   {k:'darkness',     v:0.88, min:0.5, max:1,    s:0.01, l:'Darkness opacity'},
 ];
 const T = {};
 for (const d of TDEF) if (d.k) T[d.k] = d.v;
-const TKEY = 'lumen.tuning.v2';
+const TKEY = 'lumen.tuning.v3';
 try { const s = JSON.parse(localStorage.getItem(TKEY) || '{}'); for (const k in s) if (k in T) T[k] = +s[k]; } catch (e) {}
 const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } catch (e) {} };
 
@@ -118,6 +125,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
+const beamCv = document.createElement('canvas'), bctx = beamCv.getContext('2d');
 const FONT = 'Georgia, "Times New Roman", serif';
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const approach = (v, t, d) => v < t ? Math.min(v + d, t) : Math.max(v - d, t);
@@ -222,19 +230,22 @@ const MIRROR_DEF = [{ x: 100, y: 13, d: '/' }, { x: 100, y: 17, d: '/' }, { x: 1
 const SRC = { x: 93, y: 13 }, CRY = { x: 108, y: 10 };
 const BEACON_DEF = [6, 48, 88, 124];
 const MURK_DEF = [25, 61, 66, 104, 113];
+const LAMP_DEF = [13, 59, 110];
+const LAMP_FLAME_Y = 20 * TILE - 46, LAMP_ZONE_Y = 20 * TILE - 18;
 
 /* =====================================================================
    World state
    ===================================================================== */
 let seenBurnout = false;
 let state = 'title', time = 0, freeze = 0, shake = 0, fade = 0, stateT = 0;
+let lamps = [], embers = [], seenLamp = false, seenEmber = false;
 let P, enemies, beacons, mirrors, particles, toasts, crystal, door, checkpoint, beam, logOpen, stats;
 const cam = { x: 0, y: 0, look: 0 };
 
 function newPlayer() {
   return { x: SPAWN.x, y: SPAWN.y, w: 18, h: 28, vx: 0, vy: 0, facing: 1, grounded: false, coyote: 0, jumpBuf: 0, jumping: false,
     fuel: 100, beamOn: false, beamAng: 0, burnout: false, regenT: 0, rays: null, beamO: null, pogoCD: 0,
-    masks: 5, maxMasks: 5, inv: 0, hurtLock: 0, hazard: 0, sx: 1, sy: 1,
+    masks: 5, maxMasks: 5, embers: 0, inv: 0, hurtLock: 0, hazard: 0, sx: 1, sy: 1,
     dropT: 0, dust: 0, anim: 0, lastSafe: { x: SPAWN.x, y: SPAWN.y }, maskLost: 0 };
 }
 function resetEnemies() {
@@ -246,7 +257,7 @@ function newGame() {
   hidden = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (grid[y][x] === '=') hidden.push({ x, y, a: 0, lit: false });
   P = newPlayer();
-  resetEnemies();
+  resetEnemies(); resetLamps(); embers = [];
   beacons = BEACON_DEF.map((x, i) => ({ x, y: 19, lit: false, final: i === BEACON_DEF.length - 1, glow: 0, near: false }));
   mirrors = MIRROR_DEF.map(m => ({ ...m, ang: m.d === '/' ? -Math.PI / 4 : Math.PI / 4 }));
   particles = []; toasts = [];
@@ -314,7 +325,7 @@ const addShake = s => { shake = Math.max(shake, s); };
    ===================================================================== */
 // Pogo is kept for a later unlock (e.g. a lens upgrade). Off in the base game.
 const ABILITIES = { pogo: false };
-const RAYS = 11;
+const RAYS = 21;
 const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
 function beamOrigin(p) { return { x: p.x + p.w / 2 + Math.cos(p.beamAng) * 10, y: p.y + p.h * 0.42 + Math.sin(p.beamAng) * 6 }; }
 function castRay(ox, oy, a, max) {
@@ -368,8 +379,10 @@ function die() {
   stats.deaths++;
   state = 'dying'; stateT = 0;
 }
+function resetLamps() { lamps = LAMP_DEF.map(x => ({ x, kindle: 0, lit: false, charges: T.lampCharges, healT: 0, glow: 0 })); }
 function respawnAtCheckpoint() {
-  P = newPlayer();
+  const keepEmbers = P.embers;
+  P = newPlayer(); P.embers = keepEmbers; resetLamps(); embers = [];
   P.x = checkpoint.x; P.y = checkpoint.y; P.lastSafe = { ...checkpoint };
   resetEnemies(); snapCam(); clearPressed();
   state = 'play'; fade = 1;
@@ -388,6 +401,7 @@ function burnEnemy(e, p, dt) {
     freeze = Math.max(freeze, T.killHitstop); addShake(T.shakeKill);
     burst(ex, ey, 26, { color: '#1b1533', smin: 40, smax: 200, lmin: 0.4, lmax: 0.9, zmin: 2, zmax: 6, g: -60 });
     burst(ex, ey, 14, { color: '#cfc4ff', smin: 60, smax: 240, lmin: 0.2, lmax: 0.5, add: true });
+    if (Math.random() < T.emberChance) embers.push({ x: ex - 3, y: ey - 3, w: 6, h: 6, vx: rnd(-50, 50), vy: -rnd(140, 220), t: 0, life: 15 });
   }
 }
 function rotateMirror(m) {
@@ -509,6 +523,10 @@ function tickPlayer(dt) {
   // Beam resolution: burn and push everything in the cone
   if (p.beamOn) {
     updateBeamRays(p);
+    if (Math.random() < dt * 40) {
+      const r = p.rays[Math.floor(Math.random() * RAYS)], d = Math.random() * r.len;
+      particles.push({ x: p.beamO.x + Math.cos(r.a) * d, y: p.beamO.y + Math.sin(r.a) * d, vx: rnd(-8, 8), vy: rnd(-12, 4), life: 0.7, max: 0.7, size: rnd(0.6, 1.3), color: '#fff0c8', g: 0, add: true, drag: 0 });
+    }
     for (const e of enemies) {
       if (e.dead || !inPlayerBeam(e.x + e.w / 2, e.y + e.h / 2, 12)) continue;
       burnEnemy(e, p, dt);
@@ -560,6 +578,15 @@ function tickEnemies(dt) {
     }
     if (inBeam) { e.beamT += dt; e.flash = 0.05; if (e.beamT > 0.35) { e.dead = true; stats.kills++; burst(ecx, ecy, 22, { color: '#ffe3a1', add: true, smin: 60, smax: 220 }); addShake(3); continue; } }
     else e.beamT = 0;
+    // Murklings will not enter a burning wick-lamp's warmth
+    for (const l of lamps) {
+      if (!l.lit || l.charges <= 0) continue;
+      const lx = (l.x + 0.5) * TILE, R = T.lampRadius * 0.9, ddx = e.x + e.w / 2 - lx;
+      if (Math.abs(ddx) < R && Math.abs(e.y + e.h / 2 - LAMP_ZONE_Y) < R) {
+        const sgn = Math.sign(ddx) || 1;
+        moveX(e, lx + sgn * R - e.w / 2 - e.x); e.dir = sgn; e.vx = sgn * Math.abs(e.vx) * 0.5; e.wind = 0;
+      }
+    }
     // Contact damage
     if (overlap({ x: p.x + 2, y: p.y + 3, w: p.w - 4, h: p.h - 3 }, e)) hurtPlayer(ecx);
   }
@@ -638,10 +665,12 @@ function tick(dt) {
         if (b.final) { state = 'end'; stateT = -1.4; }
       } else if (P.masks < P.maxMasks) toast('You rest by the flame.', 1.6);
       checkpoint = { x: bx - P.w / 2, y: (b.y + 1) * TILE - P.h };
-      P.masks = P.maxMasks;
+      P.masks = P.maxMasks; resetLamps();
     }
     b.near = near;
   }
+
+  tickLamps(dt); tickEmbers(dt);
 
   // Interact: read lore stones or turn mirrors
   if (take('interact')) {
@@ -657,6 +686,62 @@ function tick(dt) {
   tickParticles(dt);
   for (const t of toasts) t.t -= dt;
   toasts = toasts.filter(t => t.t > 0);
+}
+function tickLamps(dt) {
+  const pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
+  for (const l of lamps) {
+    const fx = (l.x + 0.5) * TILE, active = l.lit && l.charges > 0;
+    l.glow = approach(l.glow, active ? 1 : l.lit ? 0.2 : 0, dt * 2);
+    if (!l.lit) {
+      if (inPlayerBeam(fx, LAMP_FLAME_Y, 12)) {
+        l.kindle += dt;
+        if (Math.random() < dt * 25) burst(fx, LAMP_FLAME_Y, 1, { color: '#ffcf7a', ang: -Math.PI / 2, spread: 0.6, smin: 20, smax: 80, lmin: 0.2, lmax: 0.4, add: true });
+        if (l.kindle >= T.lampKindleTime) {
+          l.lit = true; addShake(3);
+          burst(fx, LAMP_FLAME_Y, 24, { color: '#f6d27a', add: true, smin: 40, smax: 200, lmin: 0.3, lmax: 0.7 });
+          if (!seenLamp) { seenLamp = true; toast('The wick-lamp catches. Stand in its warmth to mend.', 3); }
+        }
+      } else l.kindle = Math.max(0, l.kindle - dt * 0.6);
+    } else if (active) {
+      const inZone = Math.hypot(pcx - fx, pcy - LAMP_ZONE_Y) < T.lampRadius && P.hazard <= 0;
+      if (inZone && P.masks < P.maxMasks) {
+        l.healT += dt;
+        if (Math.random() < dt * 14) { const a = rnd(0, 6.28), rr = rnd(20, 50); particles.push({ x: pcx + Math.cos(a) * rr, y: pcy + Math.sin(a) * rr, vx: -Math.cos(a) * rr * 2, vy: -Math.sin(a) * rr * 2, life: 0.5, max: 0.5, size: 1.6, color: '#ffd27a', g: 0, add: true, drag: 0 }); }
+        if (l.healT >= T.lampHealTime) {
+          l.healT = 0; P.masks++; l.charges--; P.sy = 1 + 0.12 * T.squash;
+          burst(pcx, pcy, 16, { color: '#f6d27a', add: true, smin: 40, smax: 160 });
+          if (l.charges <= 0) { toast('The lamp\'s oil is spent.', 1.8); burst(fx, LAMP_FLAME_Y, 10, { color: '#7a6a55', g: -40, smin: 10, smax: 50, lmin: 0.5, lmax: 1 }); }
+        }
+      } else l.healT = Math.max(0, l.healT - dt * 0.5);
+    }
+  }
+}
+function tickEmbers(dt) {
+  const pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
+  for (const m of embers) {
+    m.t += dt;
+    const dx = pcx - (m.x + 3), dy = pcy - (m.y + 3), d = Math.hypot(dx, dy);
+    if (m.t > 0.35 && d < 80 && P.hazard <= 0) {          // drawn toward the lantern
+      m.vx += dx / d * 1400 * dt; m.vy += dy / d * 1400 * dt;
+      m.vx *= 1 - 3 * dt; m.vy *= 1 - 3 * dt;
+      m.x += m.vx * dt; m.y += m.vy * dt;
+    } else {
+      m.vy = Math.min(m.vy + 500 * dt, 220); m.vx *= 1 - 4 * dt;
+      if (moveX(m, m.vx * dt)) m.vx = 0;
+      if (moveY(m, m.vy * dt, true, 0)) m.vy = 0;
+    }
+    if (m.t > 0.35 && d < 16) {
+      m.dead = true; P.embers = Math.min(T.embersPerMask, P.embers + 1);
+      burst(m.x + 3, m.y + 3, 8, { color: '#ffb35a', add: true, smin: 30, smax: 120, lmin: 0.2, lmax: 0.4 });
+      if (!seenEmber) { seenEmber = true; toast(`Embers: gather ${T.embersPerMask} to mend a mask.`, 2.6); }
+    }
+    if (m.t > m.life) m.dead = true;
+  }
+  embers = embers.filter(m => !m.dead);
+  if (P.embers >= T.embersPerMask && P.masks < P.maxMasks) {
+    P.embers -= T.embersPerMask; P.masks++; P.sy = 1 + 0.12 * T.squash;
+    burst(pcx, pcy, 18, { color: '#ffb35a', add: true, smin: 40, smax: 180 });
+  }
 }
 function tickParticles(dt) {
   for (const q of particles) { q.life -= dt; q.vx -= q.vx * q.drag * dt; q.vy -= q.vy * q.drag * dt; q.vy += q.g * dt; q.x += q.vx * dt; q.y += q.vy * dt; }
@@ -836,6 +921,22 @@ function drawProps() {
     ctx.strokeStyle = `rgba(111,214,208,${0.55 + 0.3 * Math.sin(time * 2 + l.x)})`; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(px, py - 18, 4, 0, 7); ctx.moveTo(px, py - 24); ctx.lineTo(px, py - 10); ctx.stroke();
   }
+  // Wick-lamps
+  for (const l of lamps) {
+    const px = (l.x + 0.5) * TILE, fy = LAMP_FLAME_Y;
+    ctx.fillStyle = '#2a2016'; ctx.fillRect(px - 2, fy + 8, 4, 20 * TILE - fy - 8);
+    ctx.fillStyle = '#3a2c1c'; ctx.fillRect(px - 6, 20 * TILE - 4, 12, 4); ctx.fillRect(px - 7, fy + 8, 14, 3);
+    ctx.strokeStyle = '#5a4630'; ctx.lineWidth = 1.5; ctx.strokeRect(px - 6, fy - 8, 12, 16);
+    ctx.beginPath(); ctx.moveTo(px - 7, fy - 8); ctx.lineTo(px, fy - 14); ctx.lineTo(px + 7, fy - 8); ctx.stroke();
+    const k = clamp(l.kindle / T.lampKindleTime, 0, 1);
+    if (l.lit && l.charges > 0) {
+      const fl = 1 + 0.15 * Math.sin(time * 12 + l.x);
+      ctx.fillStyle = '#f2a33a'; ctx.beginPath(); ctx.moveTo(px - 4, fy + 6); ctx.quadraticCurveTo(px, fy - 10 * fl * l.glow, px + 4, fy + 6); ctx.fill();
+      ctx.fillStyle = '#ffe7a8'; ctx.beginPath(); ctx.moveTo(px - 2, fy + 6); ctx.quadraticCurveTo(px, fy - 4 * fl * l.glow, px + 2, fy + 6); ctx.fill();
+    } else {
+      ctx.fillStyle = l.lit ? '#3a2a20' : `rgb(${120 + 135 * k},${60 + 120 * k},${30 + 40 * k})`; ctx.fillRect(px - 1.5, fy + 2, 3, 4);
+    }
+  }
   // Beacons
   for (const b of beacons) {
     const px = (b.x + 0.5) * TILE, py = 20 * TILE;
@@ -886,6 +987,11 @@ function collectLights() {
     L.push(b.lit ? { x: px, y: py, r: 120 + 120 * b.glow + 6 * Math.sin(time * 9 + b.x), i: 1 } : { x: px, y: py + 6, r: 42, i: 0.6 });
   }
   for (const l of LORE) L.push({ x: (l.x + 0.5) * TILE, y: 20 * TILE - 18, r: 46, i: 0.55 });
+  for (const l of lamps) {
+    const fx = (l.x + 0.5) * TILE, k = clamp(l.kindle / T.lampKindleTime, 0, 1);
+    L.push({ x: fx, y: LAMP_FLAME_Y + 10, r: l.lit ? 40 + (T.lampRadius + 60) * l.glow + 4 * Math.sin(time * 8 + l.x) : 26 + 30 * k, i: l.lit ? 0.6 + 0.4 * l.glow : 0.5 });
+  }
+  for (const m of embers) L.push({ x: m.x + 3, y: m.y + 3, r: 34, i: 0.7 });
   L.push({ x: (SRC.x + 0.5) * TILE, y: (SRC.y + 0.5) * TILE, r: 70, i: 0.9 });
   L.push({ x: (CRY.x + 0.5) * TILE, y: (CRY.y + 0.5) * TILE, r: 40 + 110 * crystal.charge, i: 0.4 + 0.6 * crystal.charge });
   return L;
@@ -923,10 +1029,10 @@ function render() {
     g.addColorStop(0, `rgba(0,0,0,${l.i})`); g.addColorStop(0.55, `rgba(0,0,0,${l.i * 0.75})`); g.addColorStop(1, 'rgba(0,0,0,0)');
     dctx.fillStyle = g; dctx.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
   }
-  if (P.beamOn && P.rays && state !== 'dying') {
-    const o = P.beamO, g = dctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, T.beamRange);
-    g.addColorStop(0, 'rgba(0,0,0,1)'); g.addColorStop(0.7, 'rgba(0,0,0,.85)'); g.addColorStop(1, 'rgba(0,0,0,0)');
-    dctx.fillStyle = g; beamPath(dctx, P); dctx.fill();
+  const beaming = P.beamOn && P.rays && state !== 'dying';
+  if (beaming) {
+    renderBeamMask(ox, oy);
+    dctx.save(); dctx.setTransform(1, 0, 0, 1, 0, 0); dctx.drawImage(beamCv, 0, 0); dctx.restore();
   }
   if (beam.pts.length > 1) {
     dctx.lineCap = 'round'; dctx.lineJoin = 'round';
@@ -949,6 +1055,18 @@ function render() {
   ctx.strokeStyle = 'rgba(111,214,208,.35)'; ctx.lineWidth = 1.5;
   for (let x = 0; x < W; x++) if (tileAt(x, 21) === '~') {
     ctx.beginPath(); for (let i = 0; i <= 8; i++) { const wx = x * TILE + i * 4, wy = 21 * TILE + 4 + Math.sin(time * 2.4 + wx * 0.08) * 1.6; i ? ctx.lineTo(wx, wy) : ctx.moveTo(wx, wy); } ctx.stroke();
+  }
+  for (const l of lamps) {
+    const fx = (l.x + 0.5) * TILE;
+    if (l.glow > 0.01) {
+      glow(fx, LAMP_FLAME_Y + 2, 46, `rgba(255,170,70,${0.35 * l.glow})`);
+      if (l.charges > 0) { ctx.save(); ctx.translate(fx, 20 * TILE - 2); ctx.scale(1, 0.22); glow(0, 0, T.lampRadius, `rgba(255,180,90,${0.22 * l.glow})`); ctx.restore(); }
+    }
+  }
+  for (const m of embers) {
+    const blink = m.life - m.t < 3 ? (Math.floor(m.t * 8) % 2 ? 0.3 : 1) : 1, x = m.x + 3, y = m.y + 3 + Math.sin(m.t * 5) * 1.5;
+    glow(x, y, 14, `rgba(255,140,50,${0.5 * blink})`);
+    ctx.fillStyle = `rgba(255,220,150,${blink})`; ctx.beginPath(); ctx.arc(x, y, 2.2, 0, 7); ctx.fill();
   }
   // Lantern beam
   if (P.beamOn && P.rays && state !== 'dying') drawBeam();
@@ -976,21 +1094,61 @@ function render() {
   if (state === 'end' && stateT > 0) drawEnd();
 }
 function glow(x, y, r, col) { const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2); }
-function beamPath(c, p) {
-  const o = p.beamO; c.beginPath(); c.moveTo(o.x, o.y);
-  for (const r of p.rays) c.lineTo(o.x + Math.cos(r.a) * r.len, o.y + Math.sin(r.a) * r.len);
+// Nested cones (fraction of full width, alpha) give a soft angular falloff with no hard centre line.
+const BEAM_LAYERS = [[1, 0.13], [0.82, 0.12], [0.64, 0.12], [0.46, 0.12], [0.3, 0.1]];
+function beamPath(c, p, f = 1) {
+  const o = p.beamO, mid = (RAYS - 1) >> 1, k = Math.max(1, Math.round(mid * f));
+  c.beginPath(); c.moveTo(o.x, o.y);
+  for (let i = mid - k; i <= mid + k; i++) { const r = p.rays[i]; c.lineTo(o.x + Math.cos(r.a) * r.len, o.y + Math.sin(r.a) * r.len); }
   c.closePath();
 }
+// Smooth light mask: angular falloff (conic) × distance falloff (radial), clipped to the
+// wall-occluded cone. Rendered once per frame and reused to cut darkness, light the scene and add haze.
+const HAS_CONIC = typeof CanvasRenderingContext2D !== 'undefined' && 'createConicGradient' in CanvasRenderingContext2D.prototype;
+function renderBeamMask(ox, oy) {
+  const p = P, o = p.beamO, R = T.beamRange, half = T.beamHalfAngle * Math.PI / 180, rs = renderScale;
+  bctx.setTransform(1, 0, 0, 1, 0, 0); bctx.globalCompositeOperation = 'source-over';
+  bctx.clearRect(0, 0, beamCv.width, beamCv.height);
+  bctx.setTransform(rs, 0, 0, rs, ox * rs, oy * rs);
+  if (HAS_CONIC) {
+    const cg = bctx.createConicGradient(p.beamAng - Math.PI, o.x, o.y), h = half / (2 * Math.PI);
+    cg.addColorStop(0, 'rgba(255,255,255,0)');
+    for (let i = -6; i <= 6; i++) { const t = i / 6; cg.addColorStop(0.5 + t * h * 1.05, `rgba(255,255,255,${Math.exp(-t * t * 2.6).toFixed(3)})`); }
+    cg.addColorStop(1, 'rgba(255,255,255,0)');
+    bctx.fillStyle = cg; beamPath(bctx, p, 1); bctx.fill();
+  } else {
+    for (const [f, a] of BEAM_LAYERS) { bctx.fillStyle = `rgba(255,255,255,${a * 1.6})`; beamPath(bctx, p, f); bctx.fill(); }
+  }
+  bctx.globalCompositeOperation = 'destination-in';
+  const rg = bctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, R);
+  rg.addColorStop(0, 'rgba(0,0,0,1)'); rg.addColorStop(0.55, 'rgba(0,0,0,.8)'); rg.addColorStop(1, 'rgba(0,0,0,0)');
+  bctx.fillStyle = rg; bctx.fillRect(o.x - R, o.y - R, R * 2, R * 2);
+  bctx.globalCompositeOperation = 'source-over';
+}
 function drawBeam() {
-  const p = P, o = p.beamO, fl = p.fuel < 20 ? 0.55 + 0.45 * Math.random() : 0.92 + 0.08 * Math.sin(time * 40);
-  const g = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, T.beamRange);
-  g.addColorStop(0, `rgba(255,236,180,${0.7 * fl})`); g.addColorStop(0.6, `rgba(255,200,110,${0.3 * fl})`); g.addColorStop(1, 'rgba(255,190,90,0)');
-  ctx.fillStyle = g; beamPath(ctx, p); ctx.fill();
-  const mid = p.rays[(RAYS - 1) >> 1];
-  ctx.strokeStyle = `rgba(255,248,225,${0.45 * fl})`; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + Math.cos(mid.a) * mid.len * 0.85, o.y + Math.sin(mid.a) * mid.len * 0.85); ctx.stroke();
-  for (const r of [p.rays[0], mid, p.rays[RAYS - 1]])
-    if (r.len < T.beamRange - 2) glow(o.x + Math.cos(r.a) * r.len, o.y + Math.sin(r.a) * r.len, 18, `rgba(255,210,130,${0.3 * fl})`);
+  const p = P, o = p.beamO, R = T.beamRange;
+  const fl = p.fuel < 20 ? 0.55 + 0.45 * Math.random() : 0.94 + 0.06 * Math.sin(time * 31);
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // 1) Illuminate: brighten what the beam falls on, keeping its own colours.
+  ctx.globalCompositeOperation = 'color-dodge'; ctx.globalAlpha = 0.85 * fl;
+  tintMask('rgb(150,132,104)'); ctx.drawImage(tintCv, 0, 0);
+  // 2) Warm haze in the air.
+  ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.42 * fl;
+  tintMask('rgb(255,214,150)'); ctx.drawImage(tintCv, 0, 0);
+  ctx.restore();
+  // 3) Warm pools where the light lands on rock, and a small bloom at the lantern.
+  for (let i = 0; i < RAYS; i += 2) {
+    const r = p.rays[i], off = Math.abs(i - (RAYS - 1) / 2) / ((RAYS - 1) / 2);
+    if (r.len < R - 4) { const k = (1 - r.len / R) * Math.exp(-off * off * 2.6); glow(o.x + Math.cos(r.a) * r.len, o.y + Math.sin(r.a) * r.len, 16 + 12 * k, `rgba(255,200,120,${0.2 * k * fl})`); }
+  }
+  glow(o.x, o.y, 20, `rgba(255,240,200,${0.45 * fl})`);
+}
+const tintCv = document.createElement('canvas'), tctx = tintCv.getContext('2d');
+function tintMask(col) {
+  if (tintCv.width !== beamCv.width || tintCv.height !== beamCv.height) { tintCv.width = beamCv.width; tintCv.height = beamCv.height; }
+  tctx.globalCompositeOperation = 'source-over'; tctx.clearRect(0, 0, tintCv.width, tintCv.height);
+  tctx.drawImage(beamCv, 0, 0);
+  tctx.globalCompositeOperation = 'source-in'; tctx.fillStyle = col; tctx.fillRect(0, 0, tintCv.width, tintCv.height);
 }
 function drawPrompts() {
   if (state !== 'play') return;
@@ -1038,6 +1196,13 @@ function drawHUD() {
   ctx.fillStyle = p.burnout ? (Math.floor(time * 4) % 2 ? '#7a3b22' : '#5a2c1a') : p.beamOn ? '#ffd27a' : '#f2b347';
   ctx.fillRect(x + 2, y + 2, (w - 4) * f, h - 4);
   if (p.burnout) { ctx.fillStyle = '#e9dcb8'; ctx.fillRect(x + 2 + (w - 4) * T.burnoutRelight / 100 - 1, y - 2, 2, h + 4); }
+  // Embers toward the next mask
+  for (let i = 0; i < T.embersPerMask; i++) {
+    const ex = x + w + 14 + i * 13, ey = y + 5;
+    if (i < p.embers) { ctx.globalCompositeOperation = 'lighter'; glow(ex, ey, 9, 'rgba(255,140,50,.6)'); ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = '#ffd9a0'; }
+    else ctx.fillStyle = '#3d3226';
+    ctx.beginPath(); ctx.arc(ex, ey, 3, 0, 7); ctx.fill();
+  }
 }
 function panel(x, y, w, h) {
   ctx.fillStyle = 'rgba(5,11,22,.92)'; ctx.fillRect(x, y, w, h);
@@ -1150,7 +1315,7 @@ function resize() {
   renderScale = Math.max(0.5, s * dpr);
   canvas.width = Math.round(VW * renderScale); canvas.height = Math.round(VH * renderScale);
   canvas.style.width = Math.round(VW * s) + 'px'; canvas.style.height = Math.round(VH * s) + 'px';
-  dark.width = canvas.width; dark.height = canvas.height;
+  dark.width = beamCv.width = canvas.width; dark.height = beamCv.height = canvas.height;
 }
 addEventListener('resize', resize); resize();
 document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') state = 'pause'; });
@@ -1169,7 +1334,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Small hook for automated testing / debugging in the console.
-window.__lumen = { T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, mirrors: () => mirrors, tick, newGame };
+window.__lumen = { T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
 })();
 </script>
 </body>
