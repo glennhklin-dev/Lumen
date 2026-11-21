@@ -33,6 +33,19 @@ A 2D side-view action-exploration game set on the Sunken Coast. You are a lanter
 
 Every number lives in `TDEF` at the top of the script. Press **T** in game to adjust them live with sliders. Values persist in localStorage. Use **Copy JSON** to export a set you like, then paste it back into the defaults.
 
-## Level (Driftwood Hollow slice)
+## Level (the Sunken Coast slice, 200×60 tiles)
 
-The slice has 5 masks, a fuel gauge, Murklings, 3 murk pools, two drowned gaps crossed on hidden walkways that only exist in lantern light, 4 beacons (checkpoints), 5 keeper's logs with real lighthouse and optics facts, and a 3-mirror beam puzzle. The puzzle charges a crystal, which opens the way to the final beacon and the Focus Lens.
+1. **Driftwood Shore:** the main band. It has two drowned gaps crossed on hidden walkways, and the climb to the pillar.
+2. **Wreck Heights (optional, above):** reached by a shaft over the pillar. It holds shipwreck hulls, Gloomwings, a Shellback, and an **Oil Flask** (+25 fuel capacity) beyond a hidden walkway. The flask is what eventually lets you relight lamps that have become locked.
+3. **Mirror hall:** a 3-mirror beam puzzle. Charging the crystal opens the door.
+4. **Glasswater Caverns (below):** reached by dropping down a shaft past the door. It has a water pit with stepping stones, Drippers on the ceiling, Shellbacks and Gloomwings.
+5. **Lamp Tower:** a 16-ledge climb to the summit beacon, which holds the Focus Lens and ends the demo.
+
+The slice also has 6 beacons, 6 wick-lamps, 6 murk pools and 8 keeper's logs with real lighthouse and optics facts.
+
+## Enemies
+
+- **Murkling:** a ground walker that chases you and does a telegraphed lunge (its eyes turn orange).
+- **Shellback:** armoured. Its shell deflects any beam that hits its face, and it turns slowly. Burn it from behind or from above. It drops 2 embers.
+- **Gloomwing:** a flyer that hovers near its roost. Its eyes flare orange, then it swoops at you. The beam blows it around and interrupts the swoop.
+- **Dripper:** hangs from ceilings and drops when you walk underneath. Shining the beam on it knocks it down early. On landing it becomes a slow crawler.

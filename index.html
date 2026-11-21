@@ -153,7 +153,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.8.1';
+const VERSION = '0.9.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -255,52 +255,91 @@ function pollPad() {
 }
 
 /* =====================================================================
-   Level — Driftwood Hollow (prototype slice)
+   Level — the Sunken Coast slice
+   Driftwood Shore (main band, floor row 40) → optional Wreck Heights above →
+   mirror hall → drop into the Glasswater Caverns → climb the Lamp Tower.
    ===================================================================== */
-const W = 130, H = 24;
-let grid;
+const W = 200, H = 60;
+let grid, DOOR = null;
 function buildLevel() {
-  grid = []; for (let y = 0; y < H; y++) grid.push(new Array(W).fill('.'));
+  grid = []; for (let y = 0; y < H; y++) grid.push(new Array(W).fill('#'));
   const R = (x0, y0, x1, y1, c) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) grid[y][x] = c; };
-  R(0, 0, W - 1, 1, '#'); R(0, 0, 0, H - 1, '#'); R(W - 1, 0, W - 1, H - 1, '#'); R(0, 20, W - 1, H - 1, '#');
-  R(5, 2, 9, 4, '#'); R(30, 2, 38, 3, '#');
-  // Shore steps
-  R(14, 17, 16, 17, '#'); R(18, 15, 22, 19, '#');
-  // First drowned gap — keeper's walkway hidden in the dark
-  R(28, 20, 41, 20, '.'); R(28, 21, 41, H - 1, '~'); R(28, 20, 32, 20, '='); R(35, 20, 41, 20, '=');
-  // The climb
-  R(50, 17, 52, 17, '#'); R(45, 14, 47, 14, '#'); R(49, 11, 51, 11, '#'); R(54, 10, 56, 19, '#');
-  R(60, 2, 70, 6, '#');
-  // Second gap — stepping stones, one of them hidden
-  R(72, 20, 85, 20, '.'); R(72, 21, 85, H - 1, '~'); R(74, 18, 75, 18, '#'); R(78, 17, 80, 17, '='); R(83, 18, 84, 18, '#');
-  // Mirror hall
-  R(90, 2, W - 1, 8, '#'); R(95, 18, 96, 18, '#'); R(98, 15, 99, 15, '#'); R(118, 9, 119, 19, 'D');
+  // ---- Driftwood Shore ----
+  R(1, 22, 129, 39, '.');
+  R(5, 22, 9, 24, '#'); R(30, 22, 38, 23, '#');
+  R(14, 37, 16, 37, '#'); R(18, 35, 22, 39, '#');                                   // shore steps
+  R(28, 40, 41, 40, '.'); R(28, 41, 41, 43, '~'); R(28, 40, 32, 40, '='); R(35, 40, 41, 40, '=');  // drowned gap, hidden walkway
+  R(50, 37, 52, 37, '#'); R(45, 34, 47, 34, '#'); R(49, 31, 51, 31, '#'); R(54, 30, 56, 39, '#');  // the climb
+  R(66, 22, 72, 25, '#');
+  R(72, 40, 85, 40, '.'); R(72, 41, 85, 43, '~'); R(74, 38, 75, 38, '#'); R(78, 37, 80, 37, '='); R(83, 38, 84, 38, '#');
+  // ---- Shaft up from the pillar into Wreck Heights ----
+  R(57, 10, 63, 29, '.');
+  R(58, 27, 60, 27, '#'); R(62, 24, 63, 24, '#'); R(59, 21, 60, 21, '#'); R(61, 18, 62, 18, '#');
+  // ---- Wreck Heights (upper cavern, floor row 18) ----
+  R(30, 4, 88, 17, '.');
+  R(36, 15, 41, 15, '#'); R(44, 12, 48, 12, '#');                                   // west hull
+  R(70, 15, 73, 15, '#'); R(76, 12, 78, 12, '#'); R(80, 9, 82, 9, '='); R(84, 9, 88, 9, '#');  // east hull → flask ledge
+  // ---- Mirror hall ----
+  R(90, 22, 129, 28, '#'); R(95, 38, 96, 38, '#'); R(98, 35, 99, 35, '#'); R(118, 29, 119, 39, 'D');
+  R(125, 40, 128, 45, '.');                                                         // drop into the caverns
+  // ---- Glasswater Caverns (floor row 56) ----
+  R(100, 46, 190, 55, '.');
+  R(140, 46, 142, 47, '#'); R(160, 46, 163, 46, '#');
+  R(150, 56, 159, 56, '.'); R(150, 57, 159, 58, '~'); R(152, 54, 153, 54, '#'); R(156, 54, 157, 54, '#');
+  // ---- Lamp Tower (x184-197, rows 4-55) ----
+  R(184, 4, 197, 55, '.');
+  const cols = { L: [185, 188], M: [189, 192], R: [193, 196] }, pat = ['M', 'R', 'M', 'L'];
+  for (let i = 0, row = 53; row >= 8; i++, row -= 3) { const [a, b] = cols[pat[i % 4]]; R(a, row, b, row, '#'); }
+  R(168, 3, 183, 7, '.');                                                           // summit chamber (floor row 8)
+  // door bounds
+  DOOR = null;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (grid[y][x] === 'D') {
+    if (!DOOR) DOOR = { x0: x, x1: x, y0: y, y1: y };
+    DOOR.x0 = Math.min(DOOR.x0, x); DOOR.x1 = Math.max(DOOR.x1, x); DOOR.y0 = Math.min(DOOR.y0, y); DOOR.y1 = Math.max(DOOR.y1, y);
+  }
 }
 const tileAt = (x, y) => (x < 0 || x >= W || y < 0 || y >= H) ? '#' : grid[y][x];
 const isSolid = (x, y) => { const c = tileAt(x, y); return c === '#' || c === 'D'; };
 let hidden = []; // {x,y,a,lit}
 const hiddenLit = (x, y) => { for (const h of hidden) if (h.x === x && h.y === y) return h.lit; return false; };
 const isPlatform = (x, y) => tileAt(x, y) === '=' && hiddenLit(x, y);
+const floorBelow = (x, y) => { while (y < H && !isSolid(x, y)) y++; return y; };
 
-const SPAWN = { x: 3 * TILE + 7, y: 20 * TILE - 28 };
+const SPAWN = { x: 3 * TILE + 7, y: 40 * TILE - 28 };
 const LORE = [
-  { x: 10, title: "Keeper's Log I — The First Light",
+  { x: 10, gy: 40, title: "Keeper's Log I — The First Light",
     text: "The Pharos of Alexandria, finished around 280 BCE, was one of the Seven Wonders of the Ancient World. It is thought to have stood over 100 metres tall, with a fire burning at its top to guide ships into harbour.\nThe dark here is older than any fire. Keep yours lit." },
-  { x: 26, title: "Keeper's Log II — Wickies",
+  { x: 26, gy: 40, title: "Keeper's Log II — Wickies",
     text: "Lighthouse keepers were nicknamed \"wickies\": they spent their nights trimming lamp wicks so the flame burned bright and clean, without blackening the glass with soot.\nThe old keepers' walkways answer only to light. Hold your lantern close to the drowned path." },
-  { x: 43, title: "Keeper's Log III — Fresnel's Rings",
+  { x: 43, gy: 40, title: "Keeper's Log III — Fresnel's Rings",
     text: "In 1822 Augustin-Jean Fresnel designed a lens built from rings of glass prisms. It gathered and bent light like a huge solid lens at a fraction of the weight, and the best could throw a beam more than 20 miles out to sea.\nThe Great Lighthouse's lenses were Fresnel's children." },
-  { x: 68, title: "Keeper's Log IV — Every Light Has a Name",
+  { x: 68, gy: 40, title: "Keeper's Log IV — Every Light Has a Name",
     text: "Each lighthouse has its own \"characteristic\": a pattern of flashes, such as two quick flashes every ten seconds, so sailors can tell which light they are seeing. By day, painted stripes and colours called daymarks do the same job." },
-  { x: 92, title: "Keeper's Log V — Angles",
+  { x: 92, gy: 40, title: "Keeper's Log V — Angles",
     text: "The law of reflection: light leaves a mirror at the same angle it arrived. Set a mirror at 45 degrees and a beam turns a perfect corner.\nTurn the mirrors with [E]. Lead the beam to the crystal." },
+  { x: 33, gy: 18, title: "Keeper's Log VI — Orders of Glass",
+    text: "Lighthouse lenses were graded into \"orders\" by size. A first-order lens, used on major coastal lights, stood taller than a person and could weigh more than a tonne.\nThey say an oil flask was left high in these wrecks, past a path only light can find." },
+  { x: 135, gy: 56, title: "Keeper's Log VII — Bent Light",
+    text: "Light slows down when it passes from air into water or glass, and bends as it changes speed. This is refraction: it is why a stick in a pool looks broken, and how every lens works." },
+  { x: 178, gy: 8, title: "Keeper's Log VIII — The Last Keepers",
+    text: "Lamps once burned whale oil, then lard oil, then kerosene, before electricity took over. Today almost every lighthouse is automated, and the keepers are gone.\nThis one still needs you." },
 ];
-const MIRROR_DEF = [{ x: 100, y: 13, d: '/' }, { x: 100, y: 17, d: '/' }, { x: 108, y: 17, d: '\\' }];
-const SRC = { x: 93, y: 13 }, CRY = { x: 108, y: 10 };
-const BEACON_DEF = [6, 48, 88, 124];
-const MURK_DEF = [25, 61, 66, 104, 113];
-const LAMP_DEF = [13, 59, 110];
-const LAMP_FLAME_Y = 20 * TILE - 46, LAMP_ZONE_Y = 20 * TILE - 18;
+const MIRROR_DEF = [{ x: 100, y: 33, d: '/' }, { x: 100, y: 37, d: '/' }, { x: 108, y: 37, d: '\\' }];
+const SRC = { x: 93, y: 33 }, CRY = { x: 108, y: 30 };
+const BEACON_DEF = [{ x: 6, gy: 40 }, { x: 48, gy: 40 }, { x: 88, gy: 40 }, { x: 121, gy: 40 }, { x: 132, gy: 56 }, { x: 172, gy: 8, final: true }];
+// Enemies: ground types stand on floor row y; wings hover around row y; drips hang from the ceiling at row y.
+const ENEMY_DEF = [
+  { t: 'murk', x: 25, y: 40 }, { t: 'murk', x: 61, y: 40 }, { t: 'murk', x: 66, y: 40 }, { t: 'murk', x: 104, y: 40 }, { t: 'murk', x: 113, y: 40 },
+  { t: 'drip', x: 69, y: 26 },
+  { t: 'murk', x: 66, y: 18 }, { t: 'shell', x: 52, y: 18 }, { t: 'wing', x: 42, y: 9 }, { t: 'wing', x: 75, y: 7 },
+  { t: 'murk', x: 146, y: 56 }, { t: 'murk', x: 168, y: 56 }, { t: 'shell', x: 115, y: 56 }, { t: 'shell', x: 180, y: 56 },
+  { t: 'wing', x: 120, y: 49 }, { t: 'wing', x: 166, y: 50 }, { t: 'drip', x: 145, y: 46 }, { t: 'drip', x: 171, y: 46 },
+  { t: 'wing', x: 191, y: 25 }, { t: 'wing', x: 189, y: 13 },
+];
+const LAMP_DEF = [{ x: 13, gy: 40 }, { x: 59, gy: 40 }, { x: 110, gy: 40 }, { x: 45, gy: 18 }, { x: 165, gy: 56 }, { x: 186, gy: 32 }];
+const lampFY = l => l.gy * TILE - 46, lampZY = l => l.gy * TILE - 18;
+const UPG_DEF = [{ x: 86, gy: 9, kind: 'fuel', amt: 25, name: 'Oil Flask' }];
+let upgrades = { got: new Set(), fuel: 0 };
 
 /* =====================================================================
    World state
@@ -313,29 +352,38 @@ const cam = { x: 0, y: 0, look: 0 };
 
 function newPlayer() {
   return { x: SPAWN.x, y: SPAWN.y, w: 18, h: 28, vx: 0, vy: 0, facing: 1, grounded: false, coyote: 0, jumpBuf: 0, jumping: false,
-    fuel: T.fuelMax, maxFuel: T.fuelMax, beamOn: false, beamAng: 0, burnout: false, regenT: 0, rays: null, beamO: null, pogoCD: 0,
+    fuel: T.fuelMax + upgrades.fuel, maxFuel: T.fuelMax + upgrades.fuel, beamOn: false, beamAng: 0, burnout: false, regenT: 0, rays: null, beamO: null, pogoCD: 0,
     masks: 5, maxMasks: 5, embers: 0, inv: 0, hurtLock: 0, hazard: 0, sx: 1, sy: 1,
     dropT: 0, dust: 0, anim: 0, lastSafe: { x: SPAWN.x, y: SPAWN.y }, maskLost: 0 };
 }
-const makeMurk = (px, extra) => ({ x: px, y: 20 * TILE - 20, w: 24, h: 20, vx: 0, vy: 0, dir: -1, hp: 1.6,
-  stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0, dead: false, t: Math.random() * 10, grounded: false, ...extra });
+const ETYPES = { murk: { w: 24, h: 20, hp: 1.6 }, wing: { w: 22, h: 14, hp: 1.0 }, shell: { w: 30, h: 22, hp: 3.2 }, drip: { w: 18, h: 16, hp: 0.9 } };
+function makeEnemy(type, cx, y, extra) {
+  const d = ETYPES[type];
+  return { type, x: cx - d.w / 2, y, w: d.w, h: d.h, vx: 0, vy: 0, dir: -1, hp: d.hp, stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0,
+    dead: false, t: Math.random() * 10, grounded: false, state: 'idle', st: 0, cd: rnd(0.5, 1.5), turnT: 0, hx: cx, hy: y + d.h / 2, ...extra };
+}
 function resetEnemies() {
-  enemies = MURK_DEF.map(x => makeMurk(x * TILE + 4));
+  enemies = ENEMY_DEF.map(d => {
+    const cx = (d.x + 0.5) * TILE;
+    if (d.t === 'wing') return makeEnemy('wing', cx, (d.y + 0.5) * TILE - 7, { state: 'hover' });
+    if (d.t === 'drip') return makeEnemy('drip', cx, d.y * TILE, { state: 'hang' });
+    return makeEnemy(d.t, cx, d.y * TILE - ETYPES[d.t].h);
+  });
   resetPools();
 }
 
 /* Murk pools: dark spots that breed Murklings, limited by a global mob cap and a per-pool cap.
    Burning a pool with the beam destroys it and frees the embers inside; its spawn drop none. */
-const POOL_DEF = [24, 64, 106];
+const POOL_DEF = [{ x: 24, gy: 40 }, { x: 64, gy: 40 }, { x: 106, gy: 40 }, { x: 68, gy: 18 }, { x: 108, gy: 56 }, { x: 176, gy: 56 }];
 let pools = [], seenPool = false;
 let seeps = [];   // pending spawns rising out of dark ground
-function resetPools() { seeps = []; darkT = 3; pools = POOL_DEF.map(x => ({ x, t: rnd(2, T.spawnInterval), tele: 0, burn: 0, dead: false })); }
+function resetPools() { seeps = []; darkT = 3; pools = POOL_DEF.map(d => ({ x: d.x, gy: d.gy, t: rnd(2, T.spawnInterval), tele: 0, burn: 0, dead: false })); }
 const poolCx = pl => (pl.x + 0.5) * TILE;
 function tickPools(dt) {
   const pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
   let pending = enemies.filter(e => !e.dead).length + pools.filter(pl => pl.tele > 0).length;
   for (const pl of pools) {
-    const cx = poolCx(pl), gy = 20 * TILE;
+    const cx = poolCx(pl), gy = pl.gy * TILE;
     if (pl.dead) continue;
     if (Math.random() < dt * 6) burst(cx + rnd(-18, 18), gy - 2, 1, { color: '#1b1533', ang: -Math.PI / 2, spread: 0.3, smin: 10, smax: 40, g: -30, lmin: 0.6, lmax: 1.2, zmin: 2, zmax: 4 });
     if (inPlayerBeam(cx, gy - 8, 16)) {               // light burns the pool away
@@ -356,7 +404,7 @@ function tickPools(dt) {
     if (pl.tele > 0) {
       pl.tele -= dt;
       if (pl.tele <= 0) {
-        const e = makeMurk(cx - 12, { pool: pl, spawned: true, vy: -280, lungeCD: 1.2, dir: Math.sign(pcx - cx) || 1 });
+        const e = makeEnemy('murk', cx, pl.gy * TILE - 20, { pool: pl, spawned: true, vy: -280, lungeCD: 1.2, dir: Math.sign(pcx - cx) || 1 });
         enemies.push(e);
         burst(cx, gy - 6, 16, { color: '#1b1533', ang: -Math.PI / 2, spread: 0.9, smin: 40, smax: 180, lmin: 0.3, lmax: 0.7, zmin: 2, zmax: 5 });
       }
@@ -385,9 +433,9 @@ function segDist(px, py, a, b) {
 }
 function isLitArea(x, y) {
   if (Math.hypot(x - (P.x + P.w / 2), y - (P.y + P.h / 2)) < lanternR() + 60) return true;
-  for (const b of beacons) if (b.lit && Math.hypot(x - (b.x + 0.5) * TILE, y - 20 * TILE) < T.beaconSafe) return true;
-  for (const l of lamps) if (l.lit && l.charges > 0 && Math.hypot(x - (l.x + 0.5) * TILE, y - LAMP_ZONE_Y) < T.lampRadius + 60) return true;
-  for (const l of LORE) if (Math.hypot(x - (l.x + 0.5) * TILE, y - 20 * TILE) < 70) return true;
+  for (const b of beacons) if (b.lit && Math.hypot(x - (b.x + 0.5) * TILE, y - b.gy * TILE) < T.beaconSafe) return true;
+  for (const l of lamps) if (l.lit && l.charges > 0 && Math.hypot(x - (l.x + 0.5) * TILE, y - lampZY(l)) < T.lampRadius + 60) return true;
+  for (const l of LORE) if (Math.hypot(x - (l.x + 0.5) * TILE, y - l.gy * TILE) < 70) return true;
   for (let i = 0; i + 1 < beam.pts.length; i++) if (segDist(x, y, beam.pts[i], beam.pts[i + 1]) < 80) return true;
   if (crystal.charge > 0.3 && Math.hypot(x - (CRY.x + 0.5) * TILE, y - (CRY.y + 0.5) * TILE) < 160) return true;
   return false;
@@ -402,7 +450,7 @@ function findDarkGround() {
       if (tileAt(tx, ty) !== '.' || tileAt(tx, ty - 1) !== '.' || tileAt(tx, ty + 1) !== '#') continue;
       const x = (tx + 0.5) * TILE, y = (ty + 1) * TILE;
       if (isLitArea(x, y - 12)) continue;
-      if (pools.some(pl => !pl.dead && Math.abs(poolCx(pl) - x) < 48 && y === 20 * TILE)) continue;
+      if (pools.some(pl => !pl.dead && Math.abs(poolCx(pl) - x) < 48 && y === pl.gy * TILE)) continue;
       return { x, y };
     }
   }
@@ -414,8 +462,7 @@ function tickDarkSpawns(dt) {
     if (isLitArea(sp.x, sp.y - 12) && sp.t > 0.15) { sp.dead = true; burst(sp.x, sp.y - 4, 8, { color: '#cfc4ff', add: true, smin: 20, smax: 90, lmin: 0.2, lmax: 0.4 }); continue; } // light snuffs it out
     if (sp.t <= 0) {
       sp.dead = true;
-      const e = makeMurk(sp.x - 12, { spawned: true, dark: true, vy: -220, lungeCD: 1.2, dir: Math.sign(P.x - sp.x) || 1 });
-      e.y = sp.y - e.h; enemies.push(e);
+      enemies.push(makeEnemy('murk', sp.x, sp.y - 20, { spawned: true, dark: true, vy: -220, lungeCD: 1.2, dir: Math.sign(P.x - sp.x) || 1 }));
       burst(sp.x, sp.y - 6, 12, { color: '#1b1533', ang: -Math.PI / 2, spread: 0.9, smin: 30, smax: 150, lmin: 0.3, lmax: 0.7, zmin: 2, zmax: 5 });
     }
   }
@@ -435,8 +482,8 @@ function drawPools() {
     ctx.fillStyle = '#05030c'; ctx.beginPath(); ctx.ellipse(sp.x, sp.y, 6 + 14 * k, 2 + 5 * k, 0, Math.PI, 0); ctx.fill();
     ctx.strokeStyle = `rgba(130,90,220,${0.3 + 0.5 * k})`; ctx.lineWidth = 1.2; ctx.stroke();
   }
-  const gy = 20 * TILE;
   for (const pl of pools) {
+    const gy = pl.gy * TILE;
     if (pl.dead) { ctx.fillStyle = 'rgba(40,34,50,.6)'; ctx.fillRect(poolCx(pl) - 18, gy - 1, 36, 2); continue; }   // scorch mark
     const cx = poolCx(pl), k = pl.tele > 0 ? 1 - pl.tele / T.spawnTelegraph : 0, b = clamp(pl.burn / T.poolBurnTime, 0, 1);
     const sc = (1 + 0.45 * k) * (1 - 0.5 * b);
@@ -459,7 +506,7 @@ function drawPoolEyes() {
   }
   for (const pl of pools) {
     if (pl.tele <= 0) continue;
-    const k = 1 - pl.tele / T.spawnTelegraph, cx = poolCx(pl), y = 20 * TILE - 4 - 10 * k;
+    const k = 1 - pl.tele / T.spawnTelegraph, cx = poolCx(pl), y = pl.gy * TILE - 4 - 10 * k;
     ctx.globalAlpha = k; ctx.fillStyle = '#d9d0ff';
     ctx.beginPath(); ctx.ellipse(cx - 4, y, 2, 2.4, 0, 0, 7); ctx.ellipse(cx + 4, y, 2, 2.4, 0, 0, 7); ctx.fill();
     ctx.globalAlpha = 1;
@@ -469,9 +516,11 @@ function newGame() {
   buildLevel();
   hidden = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (grid[y][x] === '=') hidden.push({ x, y, a: 0, lit: false });
+  upgrades = { got: new Set(), fuel: 0 };
   P = newPlayer();
   resetEnemies(); resetLamps(); embers = [];
-  beacons = BEACON_DEF.map((x, i) => ({ x, y: 19, lit: false, final: i === BEACON_DEF.length - 1, glow: 0, near: false }));
+  beacons = BEACON_DEF.map(d => ({ x: d.x, gy: d.gy, lit: false, final: !!d.final, glow: 0, near: false }));
+  upgrades = { got: new Set(), fuel: 0 };
   mirrors = MIRROR_DEF.map(m => ({ ...m, ang: m.d === '/' ? -Math.PI / 4 : Math.PI / 4 }));
   particles = []; toasts = [];
   crystal = { charge: 0 }; door = { open: false, t: 0, opening: false };
@@ -583,7 +632,7 @@ function hurtPlayer(fromX) {
 function hazardHit() {
   const p = P;
   stats.falls++;
-  burst(p.x + p.w / 2, 21 * TILE, 22, { ang: -Math.PI / 2, spread: 0.9, smin: 80, smax: 260, color: '#6fd6d0', g: 600, lmin: 0.4, lmax: 0.8, add: true });
+  burst(p.x + p.w / 2, p.y + p.h - 4, 22, { ang: -Math.PI / 2, spread: 0.9, smin: 80, smax: 260, color: '#6fd6d0', g: 600, lmin: 0.4, lmax: 0.8, add: true });
   p.masks--; p.maskLost = 0.6; addShake(T.shakeHurt * 0.6);
   if (p.masks <= 0) { die(); return; }
   p.hazard = 0.7; p.vx = p.vy = 0; p.inv = 0.9;
@@ -592,7 +641,7 @@ function die() {
   stats.deaths++;
   state = 'dying'; stateT = 0;
 }
-function resetLamps() { lamps = LAMP_DEF.map(x => ({ x, kindle: 0, lit: false, charges: T.lampCharges, healT: 0, glow: 0, lights: 0, warned: false })); }
+function resetLamps() { lamps = LAMP_DEF.map(d => ({ x: d.x, gy: d.gy, kindle: 0, lit: false, charges: T.lampCharges, healT: 0, glow: 0, lights: 0, warned: false })); }
 function respawnAtCheckpoint() {
   const keepEmbers = P.embers;
   P = newPlayer(); P.embers = keepEmbers; embers = [];
@@ -600,11 +649,25 @@ function respawnAtCheckpoint() {
   resetEnemies(); snapCam(); clearPressed();
   state = 'play'; fade = 1;
 }
+let seenShell = false;
 function burnEnemy(e, p, dt) {
   const dx = Math.cos(p.beamAng), dy = Math.sin(p.beamAng), lim = T.beamKnock;
+  // Shellback: light striking its face glances off the shell. Burn it from behind or from above.
+  if (e.type === 'shell' && dy < 0.75 && Math.sign(dx) === -e.dir) {
+    e.vx = clamp(e.vx + dx * 80 * dt, -40, 40);
+    if (Math.random() < dt * 30) burst(e.x + e.w / 2 + e.dir * 14, e.y + e.h / 2, 1, { color: '#e8f4ff', ang: Math.PI - p.beamAng, spread: 0.7, smin: 80, smax: 220, lmin: 0.12, lmax: 0.25, add: true });
+    if (!seenShell) { seenShell = true; toast('Its shell turns the light aside. Burn it from behind or above.', 3); }
+    return;
+  }
+  if (e.type === 'drip' && (e.state === 'hang' || e.state === 'tremble')) { e.state = 'fall'; e.vy = 60; }
   e.hp -= T.beamDps * dt; e.flash = 0.05; e.wind = 0; e.stun = Math.max(e.stun, 0.15);
-  e.vx = clamp(e.vx + dx * lim * 8 * dt, -lim, lim);   // pushed along the beam
-  e.vy += dy * lim * 6 * dt;                            // lifted / pinned (weaker than gravity)
+  if (e.type === 'wing') {                              // flyers are blown about freely
+    e.vx = clamp(e.vx + dx * lim * 10 * dt, -lim * 1.3, lim * 1.3); e.vy = clamp(e.vy + dy * lim * 10 * dt, -lim * 1.3, lim * 1.3);
+  } else {
+    const heavy = e.type === 'shell' ? 0.35 : 1;
+    e.vx = clamp(e.vx + dx * lim * 8 * heavy * dt, -lim * heavy, lim * heavy);   // pushed along the beam
+    e.vy += dy * lim * 6 * heavy * dt;                                           // lifted / pinned (weaker than gravity)
+  }
   addShake(T.shakeHit * 0.5);
   const ex = e.x + e.w / 2, ey = e.y + e.h / 2;
   if (Math.random() < dt * 30) burst(ex, ey, 1, { color: '#ffe3a1', ang: p.beamAng, spread: 0.8, smin: 60, smax: 200, lmin: 0.15, lmax: 0.3, add: true });
@@ -614,7 +677,8 @@ function burnEnemy(e, p, dt) {
     freeze = Math.max(freeze, T.killHitstop); addShake(T.shakeKill);
     burst(ex, ey, 26, { color: '#1b1533', smin: 40, smax: 200, lmin: 0.4, lmax: 0.9, zmin: 2, zmax: 6, g: -60 });
     burst(ex, ey, 14, { color: '#cfc4ff', smin: 60, smax: 240, lmin: 0.2, lmax: 0.5, add: true });
-    if (Math.random() < (e.spawned ? T.spawnEmberChance : T.emberChance)) embers.push({ x: ex - 3, y: ey - 3, w: 6, h: 6, vx: rnd(-50, 50), vy: -rnd(140, 220), t: 0, life: 15 });
+    const n = e.type === 'shell' ? 2 : 1;
+    for (let i = 0; i < n; i++) if (Math.random() < (e.spawned ? T.spawnEmberChance : T.emberChance)) embers.push({ x: ex - 3, y: ey - 3, w: 6, h: 6, vx: rnd(-60, 60), vy: -rnd(140, 220), t: 0, life: 15 });
   }
 }
 function rotateMirror(m) {
@@ -750,38 +814,94 @@ function tickPlayer(dt) {
 }
 
 /* =====================================================================
-   Murklings
+   Enemies — Murkling (walker, lunges), Shellback (armoured front), Gloomwing (swooping flyer),
+   Dripper (ceiling ambusher that becomes a crawler)
    ===================================================================== */
+function aiWalker(e, dt, dx, dy) {
+  const p = P, murk = e.type === 'murk', shell = e.type === 'shell';
+  if (e.stun > 0) {
+    e.stun -= dt; e.vx = approach(e.vx, 0, 900 * dt);
+  } else if (e.wind > 0) {
+    e.vx = approach(e.vx, 0, 1200 * dt);
+    e.wind -= dt;
+    if (e.wind <= 0) { e.vx = e.dir * 300; e.vy = -260; e.lungeCD = 1.3; }
+  } else {
+    const chase = Math.abs(dx) < (shell ? 260 : 230) && Math.abs(dy) < 90 && p.hazard <= 0;
+    if (chase) {
+      const want = Math.sign(dx) || e.dir;
+      if (shell) {                       // shellbacks turn slowly, leaving their back open for a moment
+        if (want !== e.dir) { e.turnT += dt; if (e.turnT > 0.75) { e.dir = want; e.turnT = 0; } } else e.turnT = 0;
+      } else e.dir = want;
+    }
+    const speed = murk ? (chase ? 105 : 50) : shell ? (chase && Math.sign(dx) === e.dir ? 45 : 28) : (chase ? 70 : 35);
+    const ax = e.dir > 0 ? e.x + e.w + 2 : e.x - 2;
+    const tx = Math.floor(ax / TILE);
+    const blocked = isSolid(tx, Math.floor((e.y + e.h - 4) / TILE)) || !isSolid(tx, Math.floor((e.y + e.h + 2) / TILE));
+    if (e.grounded && blocked) { if (chase) e.vx = approach(e.vx, 0, 1200 * dt); else { e.dir *= -1; e.turnT = 0; } }
+    else e.vx = approach(e.vx, e.dir * speed, 700 * dt);
+    if (murk && chase && e.grounded && e.lungeCD <= 0 && Math.abs(dx) < 90 && !blocked) { e.wind = 0.38; }
+  }
+  e.vy = Math.min(e.vy + 2000 * dt, 700);
+  if (moveX(e, e.vx * dt)) { e.vx = 0; if (e.stun <= 0) e.dir *= -1; }
+  const r = moveY(e, e.vy * dt, false, 0);
+  e.grounded = r === 'floor'; if (r) e.vy = 0;
+}
+function aiWing(e, dt, dx, dy) {
+  const d = Math.hypot(dx, dy) || 1;
+  e.cd -= dt;
+  if (e.stun > 0) {
+    e.stun -= dt; e.vx *= 1 - 3 * dt; e.vy *= 1 - 3 * dt;
+    if (e.state === 'tele' || e.state === 'swoop') { e.state = 'back'; e.cd = 1.2; }
+  } else if (e.state === 'hover') {
+    const tx = e.hx + Math.sin(e.t * 1.3) * 34, ty = e.hy + Math.sin(e.t * 2.1) * 12;
+    e.vx = approach(e.vx, clamp((tx - e.x - e.w / 2) * 3, -90, 90), 400 * dt);
+    e.vy = approach(e.vy, clamp((ty - e.y - e.h / 2) * 3, -90, 90), 400 * dt);
+    if (d < 250 && e.cd <= 0 && P.hazard <= 0) { e.state = 'tele'; e.st = 0.5; }
+  } else if (e.state === 'tele') {                    // eyes flare, wings beat hard: dodge window
+    e.vx *= 1 - 6 * dt; e.vy *= 1 - 6 * dt; e.st -= dt; e.dir = Math.sign(dx) || e.dir;
+    if (e.st <= 0) { e.state = 'swoop'; e.st = 0.6; e.vx = dx / d * 330; e.vy = dy / d * 330; }
+  } else if (e.state === 'swoop') {
+    e.st -= dt; if (e.st <= 0) { e.state = 'back'; e.cd = 1.6; }
+  } else {                                            // fly back to the roost
+    const bx = e.hx - (e.x + e.w / 2), by = e.hy - (e.y + e.h / 2), bd = Math.hypot(bx, by) || 1;
+    e.vx = approach(e.vx, bx / bd * 140, 500 * dt); e.vy = approach(e.vy, by / bd * 140, 500 * dt);
+    if (bd < 20) e.state = 'hover';
+  }
+  if (e.state !== 'tele' && Math.abs(e.vx) > 5) e.dir = Math.sign(e.vx);
+  const hx = moveX(e, e.vx * dt), hy = moveY(e, e.vy * dt, false, 0);
+  if (hx) e.vx = -e.vx * 0.3; if (hy) e.vy = -e.vy * 0.3;
+  if ((hx || hy) && e.state === 'swoop') { e.state = 'back'; e.cd = 1.6; }
+}
+function aiDrip(e, dt, dx, dy) {
+  if (e.state === 'hang') {
+    e.vx = e.vy = 0;
+    if (Math.abs(dx) < 28 && dy > 0 && dy < 320 && P.hazard <= 0) { e.state = 'tremble'; e.st = 0.3; }
+  } else if (e.state === 'tremble') {
+    e.st -= dt; if (e.st <= 0) { e.state = 'fall'; e.vy = 60; }
+  } else if (e.state === 'fall') {
+    e.vy = Math.min(e.vy + 2200 * dt, 800);
+    moveX(e, e.vx * dt);
+    if (moveY(e, e.vy * dt, false, 0) === 'floor') {
+      e.state = 'crawl'; e.vy = 0; e.grounded = true; e.stun = 0.45; e.dir = Math.sign(dx) || 1; addShake(2);
+      burst(e.x + e.w / 2, e.y + e.h, 12, { color: '#1b1533', ang: -Math.PI / 2, spread: 1.4, smin: 40, smax: 160, lmin: 0.3, lmax: 0.6, zmin: 2, zmax: 4 });
+    }
+  }
+}
 function tickEnemies(dt) {
   const p = P, pcx = p.x + p.w / 2, pcy = p.y + p.h / 2;
   for (const e of enemies) {
     if (e.dead) continue;
     e.t += dt; e.flash -= dt; e.lungeCD -= dt;
-    const ecx = e.x + e.w / 2, ecy = e.y + e.h / 2, dx = pcx - ecx, dy = pcy - ecy;
-    if (e.stun > 0) {
-      e.stun -= dt; e.vx = approach(e.vx, 0, 900 * dt);
-    } else if (e.wind > 0) {
-      e.vx = approach(e.vx, 0, 1200 * dt);
-      e.wind -= dt;
-      if (e.wind <= 0) { e.vx = e.dir * 300; e.vy = -260; e.lungeCD = 1.3; }
-    } else {
-      const chase = Math.abs(dx) < 230 && Math.abs(dy) < 90 && p.hazard <= 0;
-      if (chase) e.dir = Math.sign(dx) || e.dir;
-      const speed = chase ? 105 : 50;
-      const ax = e.dir > 0 ? e.x + e.w + 2 : e.x - 2;
-      const tx = Math.floor(ax / TILE);
-      const blocked = isSolid(tx, Math.floor((e.y + e.h - 4) / TILE)) || !isSolid(tx, Math.floor((e.y + e.h + 2) / TILE));
-      if (e.grounded && blocked) { if (chase) e.vx = approach(e.vx, 0, 1200 * dt); else { e.dir *= -1; } }
-      else e.vx = approach(e.vx, e.dir * speed, 700 * dt);
-      if (chase && e.grounded && e.lungeCD <= 0 && Math.abs(dx) < 90 && !blocked) { e.wind = 0.38; }
-    }
-    e.vy = Math.min(e.vy + 2000 * dt, 700);
-    if (moveX(e, e.vx * dt)) { e.vx = 0; if (e.stun <= 0) e.dir *= -1; }
-    const r = moveY(e, e.vy * dt, false, 0);
-    e.grounded = r === 'floor'; if (r) e.vy = 0;
-    const fy = Math.floor((e.y + e.h - 4) / TILE);
-    if (tileAt(Math.floor(ecx / TILE), fy) === '~' || e.y > H * TILE) {
-      e.dead = true; burst(ecx, ecy, 12, { color: '#6fd6d0', add: true, g: 400, ang: -Math.PI / 2, spread: 0.8 }); continue;
+    const dx = pcx - (e.x + e.w / 2), dy = pcy - (e.y + e.h / 2);
+    if (e.type === 'wing') aiWing(e, dt, dx, dy);
+    else if (e.type === 'drip' && e.state !== 'crawl') aiDrip(e, dt, dx, dy);
+    else aiWalker(e, dt, dx, dy);
+    const ecx = e.x + e.w / 2, ecy = e.y + e.h / 2;
+    if (e.type !== 'wing') {
+      const fy = Math.floor((e.y + e.h - 4) / TILE);
+      if (tileAt(Math.floor(ecx / TILE), fy) === '~' || e.y > H * TILE) {
+        e.dead = true; burst(ecx, ecy, 12, { color: '#6fd6d0', add: true, g: 400, ang: -Math.PI / 2, spread: 0.8 }); continue;
+      }
     }
     // Burned by the mirror beam
     let inBeam = false;
@@ -792,16 +912,20 @@ function tickEnemies(dt) {
     }
     if (inBeam) { e.beamT += dt; e.flash = 0.05; if (e.beamT > 0.35) { e.dead = true; stats.kills++; burst(ecx, ecy, 22, { color: '#ffe3a1', add: true, smin: 60, smax: 220 }); addShake(3); continue; } }
     else e.beamT = 0;
-    // Murklings will not enter a burning wick-lamp's warmth
+    // Nothing of the Murk will enter a burning wick-lamp's warmth
     for (const l of lamps) {
       if (!l.lit || l.charges <= 0) continue;
-      const lx = (l.x + 0.5) * TILE, R = T.lampRadius * 0.9, ddx = e.x + e.w / 2 - lx;
-      if (Math.abs(ddx) < R && Math.abs(e.y + e.h / 2 - LAMP_ZONE_Y) < R) {
+      const lx = (l.x + 0.5) * TILE, R = T.lampRadius * 0.9, ddx = ecx - lx, ddy = ecy - lampZY(l);
+      if (e.type === 'wing') {
+        const dd = Math.hypot(ddx, ddy);
+        if (dd < R) { const k = (R - dd) / (dd || 1); moveX(e, ddx * k); moveY(e, ddy * k, false, 0); if (e.state === 'swoop' || e.state === 'tele') { e.state = 'back'; e.cd = 1.4; } }
+      } else if (e.state !== 'hang' && Math.abs(ddx) < R && Math.abs(ddy) < R) {
         const sgn = Math.sign(ddx) || 1;
         moveX(e, lx + sgn * R - e.w / 2 - e.x); e.dir = sgn; e.vx = sgn * Math.abs(e.vx) * 0.5; e.wind = 0;
       }
     }
     // Contact damage
+    if (e.type === 'drip' && e.state === 'hang') continue;
     if (overlap({ x: p.x + 2, y: p.y + 3, w: p.w - 4, h: p.h - 3 }, e)) hurtPlayer(ecx);
   }
 }
@@ -870,26 +994,34 @@ function tick(dt) {
 
   // Beacons
   for (const b of beacons) {
-    const bx = (b.x + 0.5) * TILE, near = Math.abs(bx - pcx) < 30 && Math.abs((b.y + 0.5) * TILE - pcy) < 40;
+    const bx = (b.x + 0.5) * TILE, near = Math.abs(bx - pcx) < 30 && Math.abs((b.gy - 0.5) * TILE - pcy) < 40;
     b.glow = approach(b.glow, b.lit ? 1 : 0, dt * 1.5);
     if (near && !b.near) {
       if (!b.lit) {
         b.lit = true; addShake(4);
-        burst(bx, b.y * TILE + 6, 30, { color: '#f6d27a', add: true, smin: 60, smax: 260, ang: -Math.PI / 2, spread: 1.2, g: 80 });
+        burst(bx, (b.gy - 1) * TILE + 6, 30, { color: '#f6d27a', add: true, smin: 60, smax: 260, ang: -Math.PI / 2, spread: 1.2, g: 80 });
         toast(b.final ? 'The Focus Lens rests in the flame.' : (beacons.indexOf(b) === 0 ? 'Beacon lit. You will return here if your light fails.' : 'Beacon lit.'));
         if (b.final) { state = 'end'; stateT = -1.4; }
       } else if (P.masks < P.maxMasks) toast('You rest by the flame.', 1.6);
-      checkpoint = { x: bx - P.w / 2, y: (b.y + 1) * TILE - P.h };
+      checkpoint = { x: bx - P.w / 2, y: b.gy * TILE - P.h };
       P.masks = P.maxMasks;
     }
     b.near = near;
   }
 
   tickLamps(dt); tickEmbers(dt);
+  UPG_DEF.forEach((u, i) => {
+    if (upgrades.got.has(i)) return;
+    if (Math.abs((u.x + 0.5) * TILE - pcx) < 22 && Math.abs(u.gy * TILE - 14 - pcy) < 30) {
+      upgrades.got.add(i); upgrades.fuel += u.amt; P.maxFuel += u.amt; P.fuel = P.maxFuel; addShake(4);
+      burst((u.x + 0.5) * TILE, u.gy * TILE - 14, 30, { color: '#f2b347', add: true, smin: 60, smax: 240 });
+      toast(`${u.name}: your lantern holds more oil (+${u.amt}).`, 3);
+    }
+  });
 
   // Interact: read lore stones or turn mirrors
   if (take('interact')) {
-    const lore = LORE.find(l => Math.abs((l.x + 0.5) * TILE - pcx) < 40 && Math.abs(19.5 * TILE - pcy) < 50);
+    const lore = LORE.find(l => Math.abs((l.x + 0.5) * TILE - pcx) < 40 && Math.abs((l.gy - 0.5) * TILE - pcy) < 50);
     if (lore) { logOpen = lore; state = 'log'; clearPressed(); }
     else {
       let best = null, bd = 2.7 * TILE;
@@ -912,25 +1044,25 @@ function tickLamps(dt) {
     const fx = (l.x + 0.5) * TILE, active = l.lit && l.charges > 0;
     l.glow = approach(l.glow, active ? 1 : l.lit ? 0.2 : 0, dt * 2);
     if (!l.lit) {
-      if (inPlayerBeam(fx, LAMP_FLAME_Y, 12)) {
+      if (inPlayerBeam(fx, lampFY(l), 12)) {
         l.kindle += T.fuelDrain * dt;   // oil poured into the wick
         if (lampLocked(l) && !l.warned) { l.warned = true; toast('This wick needs more oil than your lantern can hold.', 2.8); }
-        if (Math.random() < dt * 25) burst(fx, LAMP_FLAME_Y, 1, { color: '#ffcf7a', ang: -Math.PI / 2, spread: 0.6, smin: 20, smax: 80, lmin: 0.2, lmax: 0.4, add: true });
+        if (Math.random() < dt * 25) burst(fx, lampFY(l), 1, { color: '#ffcf7a', ang: -Math.PI / 2, spread: 0.6, smin: 20, smax: 80, lmin: 0.2, lmax: 0.4, add: true });
         if (l.kindle >= lampNeed(l)) {
           l.lit = true; l.lights++; l.kindle = 0; l.charges = T.lampCharges; l.healT = 0; l.warned = false; addShake(3);
-          burst(fx, LAMP_FLAME_Y, 24, { color: '#f6d27a', add: true, smin: 40, smax: 200, lmin: 0.3, lmax: 0.7 });
+          burst(fx, lampFY(l), 24, { color: '#f6d27a', add: true, smin: 40, smax: 200, lmin: 0.3, lmax: 0.7 });
           if (!seenLamp) { seenLamp = true; toast('The wick-lamp catches. Stand in its warmth to mend.', 3); }
         }
       } else l.kindle = Math.max(0, l.kindle - T.lampFade * dt);   // fades fast without light
     } else if (active) {
-      const inZone = Math.hypot(pcx - fx, pcy - LAMP_ZONE_Y) < T.lampRadius && P.hazard <= 0;
+      const inZone = Math.hypot(pcx - fx, pcy - lampZY(l)) < T.lampRadius && P.hazard <= 0;
       if (inZone && P.masks < P.maxMasks) {
         l.healT += dt;
         if (Math.random() < dt * 14) { const a = rnd(0, 6.28), rr = rnd(20, 50); particles.push({ x: pcx + Math.cos(a) * rr, y: pcy + Math.sin(a) * rr, vx: -Math.cos(a) * rr * 2, vy: -Math.sin(a) * rr * 2, life: 0.5, max: 0.5, size: 1.6, color: '#ffd27a', g: 0, add: true, drag: 0 }); }
         if (l.healT >= T.lampHealTime) {
           l.healT = 0; P.masks++; l.charges--; P.sy = 1 + 0.12 * T.squash;
           burst(pcx, pcy, 16, { color: '#f6d27a', add: true, smin: 40, smax: 160 });
-          if (l.charges <= 0) { l.lit = false; l.kindle = 0; toast(lampLocked(l) ? 'The lamp gutters out. Your lantern can no longer wake it.' : 'The lamp gutters out. Waking it again will take more oil.', 2.6); burst(fx, LAMP_FLAME_Y, 10, { color: '#7a6a55', g: -40, smin: 10, smax: 50, lmin: 0.5, lmax: 1 }); }
+          if (l.charges <= 0) { l.lit = false; l.kindle = 0; toast(lampLocked(l) ? 'The lamp gutters out. Your lantern can no longer wake it.' : 'The lamp gutters out. Waking it again will take more oil.', 2.6); burst(fx, lampFY(l), 10, { color: '#7a6a55', g: -40, smin: 10, smax: 50, lmin: 0.5, lmax: 1 }); }
         }
       } else l.healT = Math.max(0, l.healT - dt * 0.5);
     }
@@ -993,14 +1125,24 @@ function updateCam(dt) {
 /* =====================================================================
    Rendering
    ===================================================================== */
-let levelCanvas = null;
+// The level is pre-drawn into 32×32-tile chunks (one huge canvas fails on phones) and only visible chunks are blitted.
+const CHUNK = 32; let chunks = [];
 function prerenderLevel() {
-  levelCanvas = document.createElement('canvas'); levelCanvas.width = W * TILE; levelCanvas.height = H * TILE;
-  const g = levelCanvas.getContext('2d'), rand = mulberry(7);
+  chunks = [];
+  const cw = Math.ceil(W / CHUNK), chH = Math.ceil(H / CHUNK), rand = mulberry(7);
+  for (let cy = 0; cy < chH; cy++) for (let cx = 0; cx < cw; cx++) {
+    const c = document.createElement('canvas');
+    c.width = Math.min(CHUNK, W - cx * CHUNK) * TILE; c.height = Math.min(CHUNK, H - cy * CHUNK) * TILE;
+    chunks.push({ cx, cy, c, g: c.getContext('2d') });
+  }
   const rock = (x, y) => tileAt(x, y) === '#';
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     if (!rock(x, y)) continue;
-    const px = x * TILE, py = y * TILE;
+    const ch = chunks[Math.floor(y / CHUNK) * cw + Math.floor(x / CHUNK)], g = ch.g;
+    const px = (x - ch.cx * CHUNK) * TILE, py = (y - ch.cy * CHUNK) * TILE;
+    // Deep rock (no open neighbour) is plain fill; edges get the hand-drawn treatment.
+    const deep = rock(x - 1, y) && rock(x + 1, y) && rock(x, y - 1) && rock(x, y + 1);
+    if (deep) { g.fillStyle = (x * 7 + y * 13) % 5 === 0 ? '#0d1d2f' : '#0c1b2c'; g.fillRect(px, py, TILE, TILE); continue; }
     g.fillStyle = (x * 7 + y * 13) % 5 === 0 ? '#11243a' : '#0f2135';
     g.fillRect(px, py, TILE, TILE);
     g.strokeStyle = 'rgba(4,10,20,.55)'; g.lineWidth = 1.2;
@@ -1025,7 +1167,7 @@ function drawBackground() {
   g.addColorStop(0, '#0c2238'); g.addColorStop(0.6, '#0a1b2e'); g.addColorStop(1, '#06121f');
   ctx.fillStyle = g; ctx.fillRect(0, 0, VW, VH);
   // Distant Great Lighthouse, dark
-  const lx = 820 - cam.x * 0.05, ly = 120 - cam.y * 0.05;
+  const depth = cam.y - 978, lx = 820 - cam.x * 0.03, ly = 120 - depth * 0.05;
   ctx.fillStyle = '#0e2740';
   ctx.beginPath(); ctx.moveTo(lx - 22, ly + 300); ctx.lineTo(lx - 13, ly + 40); ctx.lineTo(lx + 13, ly + 40); ctx.lineTo(lx + 22, ly + 300); ctx.fill();
   ctx.fillRect(lx - 17, ly + 22, 34, 20); ctx.beginPath(); ctx.moveTo(lx - 19, ly + 22); ctx.lineTo(lx, ly + 4); ctx.lineTo(lx + 19, ly + 22); ctx.fill();
@@ -1038,7 +1180,7 @@ function drawBackground() {
       const wx = sx + off, i = Math.floor(wx / seg), f = wx / seg - i;
       const h0 = farHills[((i % 80) + 80) % 80], h1 = farHills[(((i + 1) % 80) + 80) % 80];
       const h = h0 + (h1 - h0) * (f * f * (3 - 2 * f));
-      ctx.lineTo(sx, base - h * amp - cam.y * par * 0.5);
+      ctx.lineTo(sx, base - h * amp - depth * par * 0.5);
     }
     ctx.lineTo(VW, VH); ctx.fill();
   }
@@ -1081,6 +1223,56 @@ function drawPlayer() {
   P._lx = lx; P._ly = ly + 5;
 }
 
+function drawEnemy(e) {
+  if (e.type === 'murk') return drawMurkling(e);
+  const cx = e.x + e.w / 2, by = e.y + e.h, body = e.flash > 0 ? '#f4ecff' : '#0d0b1c', rim = 'rgba(120,90,200,.4)';
+  ctx.lineWidth = 1.5;
+  if (e.type === 'wing') {
+    const cy = e.y + e.h / 2, fast = e.state === 'tele' || e.state === 'swoop', f = Math.sin(e.t * (fast ? 34 : 16));
+    ctx.fillStyle = body; ctx.strokeStyle = rim;
+    for (const s of [-1, 1]) {
+      ctx.beginPath(); ctx.moveTo(cx + s * 3, cy - 1);
+      ctx.quadraticCurveTo(cx + s * 13, cy - 6 - 8 * f, cx + s * 21, cy - 2 - 7 * f);
+      ctx.lineTo(cx + s * 15, cy + 2); ctx.lineTo(cx + s * 11, cy + 1); ctx.lineTo(cx + s * 7, cy + 4); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.ellipse(cx, cy, 6, 6, 0, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx - 4, cy - 4); ctx.lineTo(cx - 6, cy - 10); ctx.lineTo(cx - 1, cy - 5); ctx.moveTo(cx + 4, cy - 4); ctx.lineTo(cx + 6, cy - 10); ctx.lineTo(cx + 1, cy - 5); ctx.fill();
+  } else if (e.type === 'shell') {
+    const d = e.dir, step = e.grounded ? Math.sin(e.t * 9) * 1.5 : 0;
+    ctx.strokeStyle = '#120f22'; ctx.lineWidth = 2;
+    for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(cx + i * 8, by - 5); ctx.lineTo(cx + i * 8 + (i % 2 ? step : -step) - 3, by); ctx.stroke(); }
+    ctx.fillStyle = body; ctx.beginPath(); ctx.ellipse(cx + d * 6, by - 7, 9, 6, 0, 0, 7); ctx.fill();          // head under the rim
+    ctx.fillStyle = e.flash > 0 ? '#ffffff' : '#1d1a2e';
+    ctx.beginPath(); ctx.ellipse(cx - d * 2, by - 7, 16, 15, 0, Math.PI, 0); ctx.closePath(); ctx.fill();       // shell dome
+    ctx.strokeStyle = '#3b3552'; ctx.lineWidth = 1.5;
+    for (const a of [0.9, 1.6, 2.3]) { ctx.beginPath(); ctx.moveTo(cx - d * 2, by - 7); ctx.lineTo(cx - d * 2 - Math.cos(a) * 15 * d, by - 7 - Math.sin(a) * 15); ctx.stroke(); }
+    ctx.strokeStyle = '#a39ad0'; ctx.lineWidth = 2.5;                                                      // bright armoured lip faces forward
+    ctx.beginPath(); ctx.ellipse(cx - d * 2, by - 7, 16, 15, 0, d > 0 ? -Math.PI / 2 : Math.PI, d > 0 ? 0 : -Math.PI / 2); ctx.stroke();
+  } else if (e.type === 'drip') {
+    ctx.fillStyle = body; ctx.strokeStyle = rim;
+    if (e.state === 'crawl') {
+      ctx.beginPath();
+      for (let i = 0; i <= 12; i++) { const a = Math.PI + (i / 12) * Math.PI; ctx.lineTo(cx + Math.cos(a) * (11 + Math.sin(e.t * 7 + i) * 1.2), by + Math.sin(a) * 8); }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    } else {
+      const sh = e.state === 'tremble' ? Math.sin(time * 80) * 1.5 : Math.sin(e.t * 1.7) * 0.8, stretch = e.state === 'fall' ? 1.35 : 1;
+      ctx.beginPath(); ctx.moveTo(cx - 3 + sh, e.y);
+      ctx.quadraticCurveTo(cx - 9 + sh, e.y + 10 * stretch, cx + sh, e.y + 16 * stretch);
+      ctx.quadraticCurveTo(cx + 9 + sh, e.y + 10 * stretch, cx + 3 + sh, e.y); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+  }
+}
+function drawEnemyEyes(e) {
+  if (e.type === 'murk') return drawMurkEyes(e);
+  const cx = e.x + e.w / 2, by = e.y + e.h;
+  let x = cx, y = e.y + e.h / 2 - 1, gap = 3, hot = false;
+  if (e.type === 'wing') { x = cx + e.dir * 1.5; hot = e.state === 'tele' || e.state === 'swoop'; }
+  else if (e.type === 'shell') { x = cx + e.dir * 9; y = by - 8; gap = 2.5; }
+  else if (e.type === 'drip') { y = e.state === 'crawl' ? by - 5 : e.y + 10; hot = e.state === 'tremble'; }
+  ctx.globalAlpha = 0.9; ctx.fillStyle = hot ? '#ffb070' : e.type === 'shell' ? '#c9f0ff' : '#d9d0ff';
+  ctx.beginPath(); ctx.ellipse(x - gap, y, 1.6, hot ? 1.2 : 2, 0, 0, 7); ctx.ellipse(x + gap, y, 1.6, hot ? 1.2 : 2, 0, 0, 7); ctx.fill();
+  ctx.globalAlpha = 1;
+}
 function drawMurkling(e) {
   const cx = e.x + e.w / 2, by = e.y + e.h;
   const shiver = e.wind > 0 ? Math.sin(time * 90) * 2 : 0;
@@ -1117,35 +1309,45 @@ function drawProps() {
     ctx.globalAlpha = 1;
   }
   // Water
-  for (let x = 0; x < W; x++) {
-    if (tileAt(x, 21) !== '~') continue;
-    const px = x * TILE, sy = 21 * TILE + 4;
-    const g = ctx.createLinearGradient(0, sy, 0, H * TILE); g.addColorStop(0, 'rgba(30,110,120,.75)'); g.addColorStop(1, 'rgba(5,25,40,.95)');
-    ctx.fillStyle = g; ctx.fillRect(px, sy, TILE, H * TILE - sy);
-  }
+  forVisibleTiles((x, y) => {
+    if (tileAt(x, y) !== '~') return;
+    const px = x * TILE, top = tileAt(x, y - 1) !== '~', sy = y * TILE + (top ? 4 : 0);
+    if (top) { const g = ctx.createLinearGradient(0, sy, 0, (y + 1) * TILE); g.addColorStop(0, 'rgba(30,110,120,.75)'); g.addColorStop(1, 'rgba(12,60,80,.88)'); ctx.fillStyle = g; }
+    else ctx.fillStyle = 'rgba(8,36,54,.94)';
+    ctx.fillRect(px, sy, TILE, (y + 1) * TILE - sy);
+  });
   // Door
-  if (!door.open) {
-    const off = door.opening ? clamp(door.t / 1.1, 0, 1) * 11 * TILE : 0;
-    ctx.save(); ctx.beginPath(); ctx.rect(118 * TILE, 9 * TILE, 2 * TILE, 11 * TILE); ctx.clip();
-    ctx.fillStyle = '#16283a'; ctx.fillRect(118 * TILE, 9 * TILE - off, 2 * TILE, 11 * TILE);
+  if (!door.open && DOOR) {
+    const dx0 = DOOR.x0 * TILE, dy0 = DOOR.y0 * TILE, dw = (DOOR.x1 - DOOR.x0 + 1) * TILE, rows = DOOR.y1 - DOOR.y0 + 1, dh = rows * TILE;
+    const off = door.opening ? clamp(door.t / 1.1, 0, 1) * dh : 0;
+    ctx.save(); ctx.beginPath(); ctx.rect(dx0, dy0, dw, dh); ctx.clip();
+    ctx.fillStyle = '#16283a'; ctx.fillRect(dx0, dy0 - off, dw, dh);
     ctx.strokeStyle = '#2b4860'; ctx.lineWidth = 2;
-    for (let i = 0; i < 11; i++) ctx.strokeRect(118 * TILE + 3, (9 + i) * TILE - off + 2, 2 * TILE - 6, TILE - 4);
+    for (let i = 0; i < rows; i++) ctx.strokeRect(dx0 + 3, dy0 + i * TILE - off + 2, dw - 6, TILE - 4);
     ctx.fillStyle = crystal.charge > 0 ? `rgba(160,230,255,${0.3 + crystal.charge * 0.6})` : '#24405a';
-    ctx.beginPath(); ctx.arc(119 * TILE, 14 * TILE - off, 7, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(dx0 + dw / 2, dy0 + dh / 2 - off, 7, 0, 7); ctx.fill();
     ctx.restore();
   }
+  // Upgrades (Oil Flask)
+  UPG_DEF.forEach((u, i) => {
+    if (upgrades.got.has(i)) return;
+    const px = (u.x + 0.5) * TILE, py = u.gy * TILE - 14 + Math.sin(time * 2.2) * 3;
+    ctx.fillStyle = '#3a2c1c'; ctx.fillRect(px - 3, py - 13, 6, 4);
+    ctx.fillStyle = '#6b5434'; ctx.beginPath(); ctx.moveTo(px - 3, py - 9); ctx.lineTo(px - 8, py - 2); ctx.lineTo(px - 8, py + 8); ctx.lineTo(px + 8, py + 8); ctx.lineTo(px + 8, py - 2); ctx.lineTo(px + 3, py - 9); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#f2b347'; ctx.fillRect(px - 6, py, 12, 7);
+  });
   // Lore stones
   for (const l of LORE) {
-    const px = (l.x + 0.5) * TILE, py = 20 * TILE;
+    const px = (l.x + 0.5) * TILE, py = l.gy * TILE;
     ctx.fillStyle = '#1d3346'; ctx.beginPath(); ctx.moveTo(px - 10, py); ctx.lineTo(px - 9, py - 26); ctx.quadraticCurveTo(px, py - 34, px + 9, py - 26); ctx.lineTo(px + 10, py); ctx.fill();
     ctx.strokeStyle = `rgba(111,214,208,${0.55 + 0.3 * Math.sin(time * 2 + l.x)})`; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(px, py - 18, 4, 0, 7); ctx.moveTo(px, py - 24); ctx.lineTo(px, py - 10); ctx.stroke();
   }
   // Wick-lamps
   for (const l of lamps) {
-    const px = (l.x + 0.5) * TILE, fy = LAMP_FLAME_Y;
-    ctx.fillStyle = '#2a2016'; ctx.fillRect(px - 2, fy + 8, 4, 20 * TILE - fy - 8);
-    ctx.fillStyle = '#3a2c1c'; ctx.fillRect(px - 6, 20 * TILE - 4, 12, 4); ctx.fillRect(px - 7, fy + 8, 14, 3);
+    const px = (l.x + 0.5) * TILE, fy = lampFY(l);
+    ctx.fillStyle = '#2a2016'; ctx.fillRect(px - 2, fy + 8, 4, l.gy * TILE - fy - 8);
+    ctx.fillStyle = '#3a2c1c'; ctx.fillRect(px - 6, l.gy * TILE - 4, 12, 4); ctx.fillRect(px - 7, fy + 8, 14, 3);
     ctx.strokeStyle = '#5a4630'; ctx.lineWidth = 1.5; ctx.strokeRect(px - 6, fy - 8, 12, 16);
     ctx.beginPath(); ctx.moveTo(px - 7, fy - 8); ctx.lineTo(px, fy - 14); ctx.lineTo(px + 7, fy - 8); ctx.stroke();
     const k = clamp(l.kindle / lampNeed(l), 0, 1);
@@ -1161,7 +1363,7 @@ function drawProps() {
   drawPools();
   // Beacons
   for (const b of beacons) {
-    const px = (b.x + 0.5) * TILE, py = 20 * TILE;
+    const px = (b.x + 0.5) * TILE, py = b.gy * TILE;
     ctx.fillStyle = '#20364a'; ctx.fillRect(px - 7, py - 22, 14, 22);
     ctx.fillStyle = '#2b475e'; ctx.fillRect(px - 12, py - 26, 24, 5); ctx.fillRect(px - 9, py - 3, 18, 3);
     if (b.final) { ctx.strokeStyle = '#c9a85a'; ctx.lineWidth = 2; ctx.strokeRect(px - 12, py - 26, 24, 5); }
@@ -1173,11 +1375,11 @@ function drawProps() {
   }
   // Beam source (old lamp lens) and crystal
   { const px = (SRC.x + 0.5) * TILE, py = (SRC.y + 0.5) * TILE;
-    ctx.strokeStyle = '#4a3b22'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, 20 * TILE); ctx.stroke();
+    ctx.strokeStyle = '#4a3b22'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, floorBelow(SRC.x, SRC.y) * TILE); ctx.stroke();
     ctx.fillStyle = '#3d3222'; ctx.fillRect(px - 10, py - 10, 16, 20);
     ctx.fillStyle = '#fff1c2'; ctx.beginPath(); ctx.ellipse(px + 7, py, 4, 8, 0, 0, 7); ctx.fill(); }
   { const px = (CRY.x + 0.5) * TILE, py = (CRY.y + 0.5) * TILE, c = crystal.charge;
-    ctx.fillStyle = '#1e3a4e'; ctx.fillRect(px - 10, 9 * TILE, 20, 6);
+    ctx.fillStyle = '#1e3a4e'; ctx.fillRect(px - 10, (CRY.y - 1) * TILE, 20, 6);
     ctx.fillStyle = `rgb(${90 + 160 * c},${170 + 80 * c},${210 + 45 * c})`;
     ctx.beginPath(); ctx.moveTo(px, py - 13); ctx.lineTo(px + 8, py); ctx.lineTo(px, py + 13); ctx.lineTo(px - 8, py); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = '#d8f6ff'; ctx.lineWidth = 1; ctx.stroke(); }
@@ -1205,13 +1407,14 @@ function collectLights() {
   const p = P;
   if (!(p.hazard > 0.35 && p.hazard < 0.6)) L.push({ x: p._lx || p.x, y: p._ly || p.y, r: lanternR(), i: 1 });
   for (const b of beacons) {
-    const px = (b.x + 0.5) * TILE, py = 20 * TILE - 34;
+    const px = (b.x + 0.5) * TILE, py = b.gy * TILE - 34;
     L.push(b.lit ? { x: px, y: py, r: 120 + 120 * b.glow + 6 * Math.sin(time * 9 + b.x), i: 1 } : { x: px, y: py + 6, r: 42, i: 0.6 });
   }
-  for (const l of LORE) L.push({ x: (l.x + 0.5) * TILE, y: 20 * TILE - 18, r: 46, i: 0.55 });
+  for (const l of LORE) L.push({ x: (l.x + 0.5) * TILE, y: l.gy * TILE - 18, r: 46, i: 0.55 });
+  UPG_DEF.forEach((u, i) => { if (!upgrades.got.has(i)) L.push({ x: (u.x + 0.5) * TILE, y: u.gy * TILE - 14, r: 70, i: 0.9 }); });
   for (const l of lamps) {
     const fx = (l.x + 0.5) * TILE, k = clamp(l.kindle / lampNeed(l), 0, 1);
-    L.push({ x: fx, y: LAMP_FLAME_Y + 10, r: l.lit ? 40 + (T.lampRadius + 60) * l.glow + 4 * Math.sin(time * 8 + l.x) : 26 + 30 * k, i: l.lit ? 0.6 + 0.4 * l.glow : 0.5 });
+    L.push({ x: fx, y: lampFY(l) + 10, r: l.lit ? 40 + (T.lampRadius + 60) * l.glow + 4 * Math.sin(time * 8 + l.x) : 26 + 30 * k, i: l.lit ? 0.6 + 0.4 * l.glow : 0.5 });
   }
   for (const m of embers) L.push({ x: m.x + 3, y: m.y + 3, r: 34, i: 0.7 });
   L.push({ x: (SRC.x + 0.5) * TILE, y: (SRC.y + 0.5) * TILE, r: 70, i: 0.9 });
@@ -1229,9 +1432,13 @@ function render() {
 
   drawBackground();
   ctx.save(); ctx.translate(ox, oy);
-  ctx.drawImage(levelCanvas, 0, 0);
+  for (const ch of chunks) {
+    const X = ch.cx * CHUNK * TILE, Y = ch.cy * CHUNK * TILE;
+    if (X > cam.x + VW + 40 || X + ch.c.width < cam.x - 40 || Y > cam.y + VH + 40 || Y + ch.c.height < cam.y - 40) continue;
+    ctx.drawImage(ch.c, X, Y);
+  }
   drawProps();
-  for (const e of enemies) if (!e.dead) drawMurkling(e);
+  for (const e of enemies) if (!e.dead) drawEnemy(e);
   if (state !== 'dying') drawPlayer();
   drawBeamCore();
   for (const q of particles) if (!q.add) { ctx.globalAlpha = clamp(q.life / q.max, 0, 1); ctx.fillStyle = q.color; ctx.fillRect(q.x - q.size / 2, q.y - q.size / 2, q.size, q.size); }
@@ -1255,7 +1462,7 @@ function render() {
   dctx.globalCompositeOperation = 'source-over';
   for (const pl of pools) {
     if (pl.dead) continue;
-    const cx = poolCx(pl), cy = 20 * TILE - 16, g = dctx.createRadialGradient(cx, cy, 0, cx, cy, 75);
+    const cx = poolCx(pl), cy = pl.gy * TILE - 16, g = dctx.createRadialGradient(cx, cy, 0, cx, cy, 75);
     g.addColorStop(0, 'rgba(3,2,10,.75)'); g.addColorStop(1, 'rgba(3,2,10,0)');
     dctx.fillStyle = g; dctx.fillRect(cx - 75, cy - 75, 150, 150);
   }
@@ -1279,33 +1486,34 @@ function render() {
   ctx.save(); ctx.translate(ox, oy);
   ctx.globalCompositeOperation = 'lighter';
   if (state !== 'dying' && P._lx) glow(P._lx, P._ly, P.beamOn ? 50 : 60, `rgba(255,190,90,${P.burnout ? 0.1 : 0.22})`);
-  for (const b of beacons) if (b.lit) glow((b.x + 0.5) * TILE, 20 * TILE - 40, 70, `rgba(255,170,70,${0.3 * b.glow})`);
+  for (const b of beacons) if (b.lit) glow((b.x + 0.5) * TILE, b.gy * TILE - 40, 70, `rgba(255,170,70,${0.3 * b.glow})`);
   glow((CRY.x + 0.5) * TILE, (CRY.y + 0.5) * TILE, 50, `rgba(140,220,255,${0.1 + 0.4 * crystal.charge})`);
   if (beam.pts.length > 1) { ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(255,200,110,.14)'; ctx.lineWidth = 22; strokePts(ctx, beam.pts); }
   // Water surface shimmer so pits read in the dark
   ctx.strokeStyle = 'rgba(111,214,208,.35)'; ctx.lineWidth = 1.5;
-  for (let x = 0; x < W; x++) if (tileAt(x, 21) === '~') {
-    ctx.beginPath(); for (let i = 0; i <= 8; i++) { const wx = x * TILE + i * 4, wy = 21 * TILE + 4 + Math.sin(time * 2.4 + wx * 0.08) * 1.6; i ? ctx.lineTo(wx, wy) : ctx.moveTo(wx, wy); } ctx.stroke();
-  }
+  forVisibleTiles((x, y) => {
+    if (tileAt(x, y) !== '~' || tileAt(x, y - 1) === '~') return;
+    ctx.beginPath(); for (let i = 0; i <= 8; i++) { const wx = x * TILE + i * 4, wy = y * TILE + 4 + Math.sin(time * 2.4 + wx * 0.08) * 1.6; i ? ctx.lineTo(wx, wy) : ctx.moveTo(wx, wy); } ctx.stroke();
+  });
   for (const l of lamps) {
     const fx = (l.x + 0.5) * TILE;
     if (l.glow > 0.01) {
-      glow(fx, LAMP_FLAME_Y + 2, 46, `rgba(255,170,70,${0.35 * l.glow})`);
-      if (l.charges > 0) { ctx.save(); ctx.translate(fx, 20 * TILE - 2); ctx.scale(1, 0.22); glow(0, 0, T.lampRadius, `rgba(255,180,90,${0.22 * l.glow})`); ctx.restore(); }
+      glow(fx, lampFY(l) + 2, 46, `rgba(255,170,70,${0.35 * l.glow})`);
+      if (l.charges > 0) { ctx.save(); ctx.translate(fx, l.gy * TILE - 2); ctx.scale(1, 0.22); glow(0, 0, T.lampRadius, `rgba(255,180,90,${0.22 * l.glow})`); ctx.restore(); }
     }
   }
   for (const sp of seeps) glow(sp.x, sp.y - 6, 34, `rgba(140,90,255,${0.35 * (1 - sp.t / sp.max)})`);
-  for (const pl of pools) if (pl.tele > 0) glow(poolCx(pl), 20 * TILE - 8, 46, `rgba(140,90,255,${0.4 * (1 - pl.tele / T.spawnTelegraph)})`);
+  for (const pl of pools) if (pl.tele > 0) glow(poolCx(pl), pl.gy * TILE - 8, 46, `rgba(140,90,255,${0.4 * (1 - pl.tele / T.spawnTelegraph)})`);
   // Kindling progress ring (with a capacity mark if the lamp is beyond the lantern's tank)
   for (const l of lamps) {
     if (l.lit || l.kindle <= 0) continue;
     const fx = (l.x + 0.5) * TILE, need = lampNeed(l), a0 = -Math.PI / 2;
     ctx.lineWidth = 2;
     ctx.strokeStyle = lampLocked(l) ? 'rgba(200,90,60,.35)' : 'rgba(255,210,140,.2)';
-    ctx.beginPath(); ctx.arc(fx, LAMP_FLAME_Y, 15, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(fx, lampFY(l), 15, 0, Math.PI * 2); ctx.stroke();
     ctx.strokeStyle = 'rgba(255,214,140,.85)';
-    ctx.beginPath(); ctx.arc(fx, LAMP_FLAME_Y, 15, a0, a0 + Math.PI * 2 * clamp(l.kindle / need, 0, 1)); ctx.stroke();
-    if (lampLocked(l)) { const cap = a0 + Math.PI * 2 * (P.maxFuel - T.igniteCost) / need; ctx.strokeStyle = 'rgba(255,120,80,.9)'; ctx.beginPath(); ctx.moveTo(fx + Math.cos(cap) * 11, LAMP_FLAME_Y + Math.sin(cap) * 11); ctx.lineTo(fx + Math.cos(cap) * 19, LAMP_FLAME_Y + Math.sin(cap) * 19); ctx.stroke(); }
+    ctx.beginPath(); ctx.arc(fx, lampFY(l), 15, a0, a0 + Math.PI * 2 * clamp(l.kindle / need, 0, 1)); ctx.stroke();
+    if (lampLocked(l)) { const cap = a0 + Math.PI * 2 * (P.maxFuel - T.igniteCost) / need; ctx.strokeStyle = 'rgba(255,120,80,.9)'; ctx.beginPath(); ctx.moveTo(fx + Math.cos(cap) * 11, lampFY(l) + Math.sin(cap) * 11); ctx.lineTo(fx + Math.cos(cap) * 19, lampFY(l) + Math.sin(cap) * 19); ctx.stroke(); }
   }
   for (const m of embers) {
     const blink = m.life - m.t < 3 ? (Math.floor(m.t * 8) % 2 ? 0.3 : 1) : 1, x = m.x + 3, y = m.y + 3 + Math.sin(m.t * 5) * 1.5;
@@ -1317,7 +1525,7 @@ function render() {
   for (const q of particles) if (q.add) { ctx.globalAlpha = clamp(q.life / q.max, 0, 1); ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, 7); ctx.fill(); }
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
-  for (const e of enemies) if (!e.dead) drawMurkEyes(e);
+  for (const e of enemies) if (!e.dead) drawEnemyEyes(e);
   drawPoolEyes();
   drawPrompts();
   ctx.restore();
@@ -1337,6 +1545,11 @@ function render() {
   if (state === 'log') drawLog();
   if (state === 'pause') drawPause();
   if (state === 'end' && stateT > 0) drawEnd();
+}
+function forVisibleTiles(fn) {
+  const x0 = Math.max(0, Math.floor(cam.x / TILE) - 1), x1 = Math.min(W - 1, Math.ceil((cam.x + VW) / TILE) + 1);
+  const y0 = Math.max(0, Math.floor(cam.y / TILE) - 1), y1 = Math.min(H - 1, Math.ceil((cam.y + VH) / TILE) + 1);
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) fn(x, y);
 }
 function glow(x, y, r, col) { const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2); }
 // Nested cones (fraction of full width, alpha) give a soft angular falloff with no hard centre line.
@@ -1404,8 +1617,8 @@ function drawPrompts() {
     ctx.fillRect(x - w / 2, y - 14, w, 20); ctx.strokeRect(x - w / 2, y - 14, w, 20);
     ctx.fillStyle = '#f2c46d'; ctx.fillText(label, x, y + 1);
   };
-  const lore = LORE.find(l => Math.abs((l.x + 0.5) * TILE - pcx) < 40 && Math.abs(19.5 * TILE - pcy) < 50);
-  if (lore) { prompt((lore.x + 0.5) * TILE, 20 * TILE - 48, 'E  Read'); return; }
+  const lore = LORE.find(l => Math.abs((l.x + 0.5) * TILE - pcx) < 40 && Math.abs((l.gy - 0.5) * TILE - pcy) < 50);
+  if (lore) { prompt((lore.x + 0.5) * TILE, lore.gy * TILE - 48, 'E  Read'); return; }
   let best = null, bd = 2.7 * TILE;
   for (const m of mirrors) { const d = Math.hypot((m.x + 0.5) * TILE - pcx, (m.y + 0.5) * TILE - pcy); if (d < bd) { bd = d; best = m; } }
   if (best) prompt((best.x + 0.5) * TILE, best.y * TILE - 8, 'E  Turn');
@@ -1582,7 +1795,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Small hook for automated testing / debugging in the console.
-window.__lumen = { T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
+window.__lumen = { tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
 })();
 </script>
 </body>
