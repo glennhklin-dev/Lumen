@@ -101,15 +101,21 @@ const TDEF = [
   {k:'killHitstop',  v:0.08, min:0,   max:0.3,  s:0.005,l:'Hit-stop on kill (s)'},
   {k:'pogoHeight',   v:2.4,  min:0.5, max:5,    s:0.05, l:'Pogo height (locked ability)'},
   {g:'Murk pools (spawning)'},
-  {k:'mobCap',       v:7,    min:1,   max:20,   s:1,    l:'Mob cap (all Murklings alive)'},
+  {k:'mobCap',       v:5,    min:1,   max:20,   s:1,    l:'Mob cap (all Murklings alive)'},
   {k:'poolCap',      v:2,    min:1,   max:6,    s:1,    l:'Alive per pool'},
-  {k:'spawnInterval',v:7,    min:1,   max:30,   s:0.5,  l:'Seconds between spawns'},
+  {k:'spawnInterval',v:12,   min:1,   max:30,   s:0.5,  l:'Seconds between spawns'},
   {k:'spawnTelegraph',v:0.8, min:0.1, max:2,    s:0.05, l:'Spawn warning (s)'},
   {k:'spawnMinDist', v:140,  min:0,   max:400,  s:10,   l:'No spawn closer than (px)'},
   {k:'spawnMaxDist', v:640,  min:200, max:1500, s:20,   l:'No spawn farther than (px)'},
   {k:'poolBurnTime', v:2.5,  min:0.3, max:8,    s:0.1,  l:'Beam time to destroy a pool (s)'},
   {k:'poolRegen',    v:0.5,  min:0,   max:3,    s:0.05, l:'Pool recovery when unlit (×)'},
   {k:'poolEmbers',   v:3,    min:0,   max:8,    s:1,    l:'Embers dropped by a pool'},
+  {g:'Darkness spawning (like night in Minecraft)'},
+  {k:'darkCap',      v:2,    min:0,   max:10,   s:1,    l:'Max alive from darkness'},
+  {k:'darkInterval', v:14,   min:0.5, max:30,   s:0.5,  l:'Seconds between dark spawns'},
+  {k:'darkMinDist',  v:220,  min:80,  max:600,  s:10,   l:'Spawn no closer than (px)'},
+  {k:'darkMaxDist',  v:560,  min:200, max:1200, s:20,   l:'Spawn no farther than (px)'},
+  {k:'beaconSafe',   v:260,  min:0,   max:600,  s:10,   l:'Lit beacon safe radius (px)'},
   {g:'Getting hurt'},
   {k:'hurtInvuln',   v:1.1,  min:0.2, max:2.5,  s:0.05, l:'Invulnerability (s)'},
   {k:'hurtKnockX',   v:280,  min:0,   max:700,  s:10,   l:'Knockback X'},
@@ -131,6 +137,7 @@ const TDEF = [
   {k:'lampHealTime', v:2.5,  min:0.5, max:6,    s:0.1,  l:'Seconds per mask in warm zone'},
   {k:'lampCharges',  v:2,    min:1,   max:5,    s:1,    l:'Masks a lamp holds'},
   {k:'emberChance',  v:0.6,  min:0,   max:1,    s:0.05, l:'Ember drop chance'},
+  {k:'spawnEmberChance',v:0.2,min:0,  max:1,    s:0.05, l:'Ember chance (spawned Murklings)'},
   {k:'embersPerMask',v:3,    min:1,   max:6,    s:1,    l:'Embers per mask'},
   {g:'Light'},
   {k:'lanternRadius',v:150,  min:80,  max:300,  s:5,    l:'Lantern radius (px)'},
@@ -138,7 +145,7 @@ const TDEF = [
 ];
 const T = {};
 for (const d of TDEF) if (d.k) T[d.k] = d.v;
-const TKEY = 'lumen.tuning.v3';
+const TKEY = 'lumen.tuning.v4';
 try { const s = JSON.parse(localStorage.getItem(TKEY) || '{}'); for (const k in s) if (k in T) T[k] = +s[k]; } catch (e) {}
 const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } catch (e) {} };
 
@@ -146,7 +153,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.7.0';
+const VERSION = '0.8.1';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -321,7 +328,8 @@ function resetEnemies() {
    Burning a pool with the beam destroys it and frees the embers inside; its spawn drop none. */
 const POOL_DEF = [24, 64, 106];
 let pools = [], seenPool = false;
-function resetPools() { pools = POOL_DEF.map(x => ({ x, t: rnd(2, T.spawnInterval), tele: 0, burn: 0, dead: false })); }
+let seeps = [];   // pending spawns rising out of dark ground
+function resetPools() { seeps = []; darkT = 3; pools = POOL_DEF.map(x => ({ x, t: rnd(2, T.spawnInterval), tele: 0, burn: 0, dead: false })); }
 const poolCx = pl => (pl.x + 0.5) * TILE;
 function tickPools(dt) {
   const pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
@@ -366,7 +374,67 @@ function tickPools(dt) {
   }
   enemies = enemies.filter(e => !(e.dead && e.spawned));
 }
+/* Darkness spawning: like mobs at night, Murklings rise from any ground that no light reaches.
+   Light sources make safe ground: the lantern, lit beacons, burning wick-lamps, the mirror beam,
+   a charged crystal and lore stones. Shares the global mob cap and has its own cap. */
+let darkT = 3;
+function segDist(px, py, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
+  const t = clamp(((px - a.x) * dx + (py - a.y) * dy) / L2, 0, 1);
+  return Math.hypot(px - a.x - dx * t, py - a.y - dy * t);
+}
+function isLitArea(x, y) {
+  if (Math.hypot(x - (P.x + P.w / 2), y - (P.y + P.h / 2)) < lanternR() + 60) return true;
+  for (const b of beacons) if (b.lit && Math.hypot(x - (b.x + 0.5) * TILE, y - 20 * TILE) < T.beaconSafe) return true;
+  for (const l of lamps) if (l.lit && l.charges > 0 && Math.hypot(x - (l.x + 0.5) * TILE, y - LAMP_ZONE_Y) < T.lampRadius + 60) return true;
+  for (const l of LORE) if (Math.hypot(x - (l.x + 0.5) * TILE, y - 20 * TILE) < 70) return true;
+  for (let i = 0; i + 1 < beam.pts.length; i++) if (segDist(x, y, beam.pts[i], beam.pts[i + 1]) < 80) return true;
+  if (crystal.charge > 0.3 && Math.hypot(x - (CRY.x + 0.5) * TILE, y - (CRY.y + 0.5) * TILE) < 160) return true;
+  return false;
+}
+function findDarkGround() {
+  const pcx = P.x + P.w / 2, pty = Math.floor((P.y + P.h - 1) / TILE);
+  for (let tries = 0; tries < 12; tries++) {
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const tx = Math.floor((pcx + side * rnd(T.darkMinDist, T.darkMaxDist)) / TILE);
+    if (tx < 1 || tx >= W - 1) continue;
+    for (let d = 0; d <= 7; d++) for (const ty of d ? [pty - d, pty + d] : [pty]) {
+      if (tileAt(tx, ty) !== '.' || tileAt(tx, ty - 1) !== '.' || tileAt(tx, ty + 1) !== '#') continue;
+      const x = (tx + 0.5) * TILE, y = (ty + 1) * TILE;
+      if (isLitArea(x, y - 12)) continue;
+      if (pools.some(pl => !pl.dead && Math.abs(poolCx(pl) - x) < 48 && y === 20 * TILE)) continue;
+      return { x, y };
+    }
+  }
+  return null;
+}
+function tickDarkSpawns(dt) {
+  for (const sp of seeps) {
+    sp.t -= dt;
+    if (isLitArea(sp.x, sp.y - 12) && sp.t > 0.15) { sp.dead = true; burst(sp.x, sp.y - 4, 8, { color: '#cfc4ff', add: true, smin: 20, smax: 90, lmin: 0.2, lmax: 0.4 }); continue; } // light snuffs it out
+    if (sp.t <= 0) {
+      sp.dead = true;
+      const e = makeMurk(sp.x - 12, { spawned: true, dark: true, vy: -220, lungeCD: 1.2, dir: Math.sign(P.x - sp.x) || 1 });
+      e.y = sp.y - e.h; enemies.push(e);
+      burst(sp.x, sp.y - 6, 12, { color: '#1b1533', ang: -Math.PI / 2, spread: 0.9, smin: 30, smax: 150, lmin: 0.3, lmax: 0.7, zmin: 2, zmax: 5 });
+    }
+  }
+  seeps = seeps.filter(sp => !sp.dead);
+  darkT -= dt;
+  if (darkT > 0) return;
+  darkT = T.darkInterval * rnd(0.7, 1.3);
+  const alive = enemies.filter(e => !e.dead).length + pools.filter(pl => pl.tele > 0).length + seeps.length;
+  const darkAlive = enemies.filter(e => !e.dead && e.dark).length + seeps.length;
+  if (alive >= T.mobCap || darkAlive >= T.darkCap || P.hazard > 0) return;
+  const g = findDarkGround();
+  if (g) seeps.push({ x: g.x, y: g.y, t: T.spawnTelegraph + 0.3, max: T.spawnTelegraph + 0.3 });
+}
 function drawPools() {
+  for (const sp of seeps) {
+    const k = 1 - sp.t / sp.max;
+    ctx.fillStyle = '#05030c'; ctx.beginPath(); ctx.ellipse(sp.x, sp.y, 6 + 14 * k, 2 + 5 * k, 0, Math.PI, 0); ctx.fill();
+    ctx.strokeStyle = `rgba(130,90,220,${0.3 + 0.5 * k})`; ctx.lineWidth = 1.2; ctx.stroke();
+  }
   const gy = 20 * TILE;
   for (const pl of pools) {
     if (pl.dead) { ctx.fillStyle = 'rgba(40,34,50,.6)'; ctx.fillRect(poolCx(pl) - 18, gy - 1, 36, 2); continue; }   // scorch mark
@@ -383,6 +451,12 @@ function drawPools() {
   }
 }
 function drawPoolEyes() {
+  for (const sp of seeps) {
+    const k = 1 - sp.t / sp.max, y = sp.y - 4 - 9 * k;
+    ctx.globalAlpha = k; ctx.fillStyle = '#d9d0ff';
+    ctx.beginPath(); ctx.ellipse(sp.x - 4, y, 2, 2.4, 0, 0, 7); ctx.ellipse(sp.x + 4, y, 2, 2.4, 0, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
   for (const pl of pools) {
     if (pl.tele <= 0) continue;
     const k = 1 - pl.tele / T.spawnTelegraph, cx = poolCx(pl), y = 20 * TILE - 4 - 10 * k;
@@ -540,7 +614,7 @@ function burnEnemy(e, p, dt) {
     freeze = Math.max(freeze, T.killHitstop); addShake(T.shakeKill);
     burst(ex, ey, 26, { color: '#1b1533', smin: 40, smax: 200, lmin: 0.4, lmax: 0.9, zmin: 2, zmax: 6, g: -60 });
     burst(ex, ey, 14, { color: '#cfc4ff', smin: 60, smax: 240, lmin: 0.2, lmax: 0.5, add: true });
-    if (!e.spawned && Math.random() < T.emberChance) embers.push({ x: ex - 3, y: ey - 3, w: 6, h: 6, vx: rnd(-50, 50), vy: -rnd(140, 220), t: 0, life: 15 });
+    if (Math.random() < (e.spawned ? T.spawnEmberChance : T.emberChance)) embers.push({ x: ex - 3, y: ey - 3, w: 6, h: 6, vx: rnd(-50, 50), vy: -rnd(140, 220), t: 0, life: 15 });
   }
 }
 function rotateMirror(m) {
@@ -781,7 +855,7 @@ function tick(dt) {
   traceBeam();
   tickEnemies(dt);
   if (state !== 'play') return;
-  tickPools(dt);
+  tickPools(dt); tickDarkSpawns(dt);
 
   // Mirrors animate toward their angle
   for (const m of mirrors) { const t = m.d === '/' ? -Math.PI / 4 : Math.PI / 4; m.ang += (t - m.ang) * Math.min(1, dt * 14); }
@@ -1220,6 +1294,7 @@ function render() {
       if (l.charges > 0) { ctx.save(); ctx.translate(fx, 20 * TILE - 2); ctx.scale(1, 0.22); glow(0, 0, T.lampRadius, `rgba(255,180,90,${0.22 * l.glow})`); ctx.restore(); }
     }
   }
+  for (const sp of seeps) glow(sp.x, sp.y - 6, 34, `rgba(140,90,255,${0.35 * (1 - sp.t / sp.max)})`);
   for (const pl of pools) if (pl.tele > 0) glow(poolCx(pl), 20 * TILE - 8, 46, `rgba(140,90,255,${0.4 * (1 - pl.tele / T.spawnTelegraph)})`);
   // Kindling progress ring (with a capacity mark if the lamp is beyond the lantern's tank)
   for (const l of lamps) {
@@ -1507,7 +1582,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Small hook for automated testing / debugging in the console.
-window.__lumen = { T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
+window.__lumen = { T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
 })();
 </script>
 </body>
