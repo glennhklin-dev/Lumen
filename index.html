@@ -100,6 +100,15 @@ const TDEF = [
   {k:'burnoutRelight',v:35,  min:0,   max:100,  s:1,    l:'Fuel needed after burnout'},
   {k:'killHitstop',  v:0.08, min:0,   max:0.3,  s:0.005,l:'Hit-stop on kill (s)'},
   {k:'pogoHeight',   v:2.4,  min:0.5, max:5,    s:0.05, l:'Pogo height (locked ability)'},
+  {g:'Murk pools (spawning)'},
+  {k:'mobCap',       v:7,    min:1,   max:20,   s:1,    l:'Mob cap (all Murklings alive)'},
+  {k:'poolCap',      v:2,    min:1,   max:6,    s:1,    l:'Alive per pool'},
+  {k:'spawnInterval',v:7,    min:1,   max:30,   s:0.5,  l:'Seconds between spawns'},
+  {k:'spawnTelegraph',v:0.8, min:0.1, max:2,    s:0.05, l:'Spawn warning (s)'},
+  {k:'spawnMinDist', v:140,  min:0,   max:400,  s:10,   l:'No spawn closer than (px)'},
+  {k:'spawnMaxDist', v:640,  min:200, max:1500, s:20,   l:'No spawn farther than (px)'},
+  {k:'poolSealTime', v:1.2,  min:0.2, max:5,    s:0.1,  l:'Beam time to seal a pool (s)'},
+  {k:'poolSealFor',  v:25,   min:3,   max:120,  s:1,    l:'Sealed for (s)'},
   {g:'Getting hurt'},
   {k:'hurtInvuln',   v:1.1,  min:0.2, max:2.5,  s:0.05, l:'Invulnerability (s)'},
   {k:'hurtKnockX',   v:280,  min:0,   max:700,  s:10,   l:'Knockback X'},
@@ -136,7 +145,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.5.0';
+const VERSION = '0.6.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -300,9 +309,82 @@ function newPlayer() {
     masks: 5, maxMasks: 5, embers: 0, inv: 0, hurtLock: 0, hazard: 0, sx: 1, sy: 1,
     dropT: 0, dust: 0, anim: 0, lastSafe: { x: SPAWN.x, y: SPAWN.y }, maskLost: 0 };
 }
+const makeMurk = (px, extra) => ({ x: px, y: 20 * TILE - 20, w: 24, h: 20, vx: 0, vy: 0, dir: -1, hp: 1.6,
+  stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0, dead: false, t: Math.random() * 10, grounded: false, ...extra });
 function resetEnemies() {
-  enemies = MURK_DEF.map(x => ({ x: x * TILE + 4, y: 20 * TILE - 20, w: 24, h: 20, vx: 0, vy: 0, dir: -1, hp: 1.6,
-    stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0, dead: false, t: Math.random() * 10, grounded: false }));
+  enemies = MURK_DEF.map(x => makeMurk(x * TILE + 4));
+  resetPools();
+}
+
+/* Murk pools: dark spots that breed Murklings, limited by a global mob cap and a per-pool cap.
+   Holding the lantern beam on a pool seals it for a while. */
+const POOL_DEF = [24, 64, 106];
+let pools = [], seenPool = false;
+function resetPools() { pools = POOL_DEF.map(x => ({ x, t: rnd(2, T.spawnInterval), tele: 0, seal: 0, sealT: 0 })); }
+const poolCx = pl => (pl.x + 0.5) * TILE;
+function tickPools(dt) {
+  const pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
+  let pending = enemies.filter(e => !e.dead).length + pools.filter(pl => pl.tele > 0).length;
+  for (const pl of pools) {
+    const cx = poolCx(pl), gy = 20 * TILE;
+    if (pl.sealT > 0) { pl.sealT -= dt; continue; }
+    if (Math.random() < dt * 6) burst(cx + rnd(-18, 18), gy - 2, 1, { color: '#1b1533', ang: -Math.PI / 2, spread: 0.3, smin: 10, smax: 40, g: -30, lmin: 0.6, lmax: 1.2, zmin: 2, zmax: 4 });
+    if (inPlayerBeam(cx, gy - 8, 16)) {               // light burns the pool shut
+      pl.seal += dt; if (pl.tele > 0) { pl.tele = 0; pending--; }
+      if (Math.random() < dt * 30) burst(cx + rnd(-16, 16), gy - 4, 1, { color: '#cfc4ff', ang: -Math.PI / 2, spread: 0.6, smin: 30, smax: 120, lmin: 0.2, lmax: 0.4, add: true });
+      if (pl.seal >= T.poolSealTime) {
+        pl.seal = 0; pl.sealT = T.poolSealFor; pl.t = T.spawnInterval; addShake(3);
+        burst(cx, gy - 6, 20, { color: '#cfc4ff', add: true, smin: 40, smax: 200, lmin: 0.3, lmax: 0.6 });
+        if (!seenPool) { seenPool = true; toast('The murk pool recoils from your light.', 2.4); }
+      }
+      continue;
+    }
+    pl.seal = Math.max(0, pl.seal - dt);
+    if (pl.tele > 0) {
+      pl.tele -= dt;
+      if (pl.tele <= 0) {
+        const e = makeMurk(cx - 12, { pool: pl, spawned: true, vy: -280, lungeCD: 1.2, dir: Math.sign(pcx - cx) || 1 });
+        enemies.push(e);
+        burst(cx, gy - 6, 16, { color: '#1b1533', ang: -Math.PI / 2, spread: 0.9, smin: 40, smax: 180, lmin: 0.3, lmax: 0.7, zmin: 2, zmax: 5 });
+      }
+      continue;
+    }
+    pl.t -= dt;
+    if (pl.t > 0) continue;
+    const d = Math.hypot(pcx - cx, pcy - (gy - 10));
+    const mine = enemies.filter(e => !e.dead && e.pool === pl).length;
+    const warmed = lamps.some(l => l.lit && l.charges > 0 && Math.abs((l.x + 0.5) * TILE - cx) < T.lampRadius + 20);
+    if (pending < T.mobCap && mine < T.poolCap && d > T.spawnMinDist && d < T.spawnMaxDist && !warmed && P.hazard <= 0) {
+      pl.tele = T.spawnTelegraph; pending++;
+      pl.t = T.spawnInterval * rnd(0.8, 1.25);
+    } else pl.t = 0.8;                                   // conditions not met: check again shortly
+  }
+  enemies = enemies.filter(e => !(e.dead && e.spawned));
+}
+function drawPools() {
+  const gy = 20 * TILE;
+  for (const pl of pools) {
+    const cx = poolCx(pl), sealed = pl.sealT > 0;
+    const k = pl.tele > 0 ? 1 - pl.tele / T.spawnTelegraph : 0;
+    const sc = sealed ? 0.55 : 1 + 0.45 * k - 0.25 * clamp(pl.seal / T.poolSealTime, 0, 1);
+    ctx.fillStyle = sealed ? 'rgba(24,22,36,.8)' : '#05030c';
+    ctx.beginPath(); ctx.moveTo(cx - 28 * sc, gy + 1);
+    for (let i = 0; i <= 18; i++) {
+      const a = Math.PI + (i / 18) * Math.PI, wob = sealed ? 0 : Math.sin(time * 4 + i * 1.3 + pl.x) * 1.5;
+      ctx.lineTo(cx + Math.cos(a) * (28 * sc + wob), gy + 1 + Math.sin(a) * (8 * sc + wob + 6 * k));
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = sealed ? 'rgba(120,120,140,.35)' : `rgba(130,90,220,${0.45 + 0.4 * k})`; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+}
+function drawPoolEyes() {
+  for (const pl of pools) {
+    if (pl.tele <= 0) continue;
+    const k = 1 - pl.tele / T.spawnTelegraph, cx = poolCx(pl), y = 20 * TILE - 4 - 10 * k;
+    ctx.globalAlpha = k; ctx.fillStyle = '#d9d0ff';
+    ctx.beginPath(); ctx.ellipse(cx - 4, y, 2, 2.4, 0, 0, 7); ctx.ellipse(cx + 4, y, 2, 2.4, 0, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
 }
 function newGame() {
   buildLevel();
@@ -694,6 +776,7 @@ function tick(dt) {
   traceBeam();
   tickEnemies(dt);
   if (state !== 'play') return;
+  tickPools(dt);
 
   // Mirrors animate toward their angle
   for (const m of mirrors) { const t = m.d === '/' ? -Math.PI / 4 : Math.PI / 4; m.ang += (t - m.ang) * Math.min(1, dt * 14); }
@@ -996,6 +1079,7 @@ function drawProps() {
       ctx.fillStyle = `rgb(${(120 * soot + 135 * k) | 0},${(60 * soot + 120 * k) | 0},${(30 * soot + 40 * k) | 0})`; ctx.fillRect(px - 1.5, fy + 2, 3, 4);
     }
   }
+  drawPools();
   // Beacons
   for (const b of beacons) {
     const px = (b.x + 0.5) * TILE, py = 20 * TILE;
@@ -1088,6 +1172,15 @@ function render() {
     g.addColorStop(0, `rgba(0,0,0,${l.i})`); g.addColorStop(0.55, `rgba(0,0,0,${l.i * 0.75})`); g.addColorStop(1, 'rgba(0,0,0,0)');
     dctx.fillStyle = g; dctx.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
   }
+  // Murk pools swallow nearby light (only the beam cuts through them)
+  dctx.globalCompositeOperation = 'source-over';
+  for (const pl of pools) {
+    if (pl.sealT > 0) continue;
+    const cx = poolCx(pl), cy = 20 * TILE - 16, g = dctx.createRadialGradient(cx, cy, 0, cx, cy, 75);
+    g.addColorStop(0, 'rgba(3,2,10,.75)'); g.addColorStop(1, 'rgba(3,2,10,0)');
+    dctx.fillStyle = g; dctx.fillRect(cx - 75, cy - 75, 150, 150);
+  }
+  dctx.globalCompositeOperation = 'destination-out';
   const beaming = P.beamOn && P.rays && state !== 'dying';
   if (beaming) {
     renderBeamMask(ox, oy);
@@ -1122,6 +1215,7 @@ function render() {
       if (l.charges > 0) { ctx.save(); ctx.translate(fx, 20 * TILE - 2); ctx.scale(1, 0.22); glow(0, 0, T.lampRadius, `rgba(255,180,90,${0.22 * l.glow})`); ctx.restore(); }
     }
   }
+  for (const pl of pools) if (pl.tele > 0) glow(poolCx(pl), 20 * TILE - 8, 46, `rgba(140,90,255,${0.4 * (1 - pl.tele / T.spawnTelegraph)})`);
   // Kindling progress ring (with a capacity mark if the lamp is beyond the lantern's tank)
   for (const l of lamps) {
     if (l.lit || l.kindle <= 0) continue;
@@ -1144,6 +1238,7 @@ function render() {
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
   for (const e of enemies) if (!e.dead) drawMurkEyes(e);
+  drawPoolEyes();
   drawPrompts();
   ctx.restore();
 
@@ -1407,7 +1502,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Small hook for automated testing / debugging in the console.
-window.__lumen = { T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
+window.__lumen = { T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
 })();
 </script>
 </body>
