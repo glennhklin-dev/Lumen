@@ -12,20 +12,20 @@
   .zone{position:absolute;top:0;bottom:0;pointer-events:auto;touch-action:none}
   #moveZone{left:0;width:45%}
   #aimZone{right:0;width:55%}
-  .stick{position:absolute;width:124px;height:124px;margin:-62px 0 0 -62px;border-radius:50%;box-sizing:border-box;
-         border:2px solid rgba(242,196,109,.4);background:rgba(242,196,109,.06);pointer-events:none;opacity:.35;transition:opacity .12s}
+  .stick{position:absolute;width:92px;height:92px;margin:-46px 0 0 -46px;border-radius:50%;box-sizing:border-box;
+         border:2px solid rgba(242,196,109,.4);background:rgba(242,196,109,.06);pointer-events:none;opacity:.22;transition:opacity .12s}
   .stick.active{opacity:1;transition:none}
-  .knob{position:absolute;left:50%;top:50%;width:54px;height:54px;margin:-27px 0 0 -27px;border-radius:50%;box-sizing:border-box;
+  .knob{position:absolute;left:50%;top:50%;width:38px;height:38px;margin:-19px 0 0 -19px;border-radius:50%;box-sizing:border-box;
         background:rgba(242,196,109,.28);border:2px solid rgba(242,196,109,.75)}
   #aimStick{border-color:rgba(255,214,140,.55)}
   #aimStick .knob{background:rgba(255,214,140,.5);box-shadow:0 0 18px rgba(255,200,110,.5)}
   .tb{z-index:2}
   #touch.on{display:block}
-  .tb{position:absolute;pointer-events:auto;width:62px;height:62px;border-radius:50%;box-sizing:border-box;
+  .tb{position:absolute;pointer-events:auto;width:46px;height:46px;border-radius:50%;box-sizing:border-box;
       background:rgba(242,196,109,.10);border:2px solid rgba(242,196,109,.45);color:#f2c46d;
-      font:600 15px Georgia,serif;display:flex;align-items:center;justify-content:center;touch-action:none}
+      font:600 13px Georgia,serif;opacity:.75;display:flex;align-items:center;justify-content:center;touch-action:none}
   .tb.down{background:rgba(242,196,109,.35)}
-  .tb.big{width:78px;height:78px;font-size:17px}
+  .tb.big{width:58px;height:58px;font-size:14px}
   #tune{position:fixed;top:8px;right:8px;width:290px;max-height:calc(100% - 16px);overflow:auto;box-sizing:border-box;
         background:rgba(6,14,26,.94);border:1px solid #2c4a5c;border-radius:8px;color:#d9e6ea;font:12px/1.3 system-ui,sans-serif;padding:10px;z-index:5}
   #tune[hidden]{display:none}
@@ -48,9 +48,9 @@
   <div class="zone" id="aimZone"></div>
   <div class="stick" id="moveStick"><div class="knob"></div></div>
   <div class="stick" id="aimStick"><div class="knob"></div></div>
-  <div class="tb big" data-a="jump"  style="right:206px;bottom:30px">Jump</div>
-  <div class="tb" data-a="interact"  style="right:226px;bottom:128px">E</div>
-  <div class="tb" data-a="pause"     style="right:16px;top:12px;width:46px;height:46px">II</div>
+  <div class="tb big" data-a="jump"  style="right:150px;bottom:18px">Jump</div>
+  <div class="tb" data-a="interact"  style="right:160px;bottom:90px">E</div>
+  <div class="tb" data-a="pause"     style="right:12px;top:10px;width:36px;height:36px">II</div>
 </div>
 
 <div id="tune" hidden>
@@ -145,7 +145,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.6.0';
+const VERSION = '0.6.1';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -195,7 +195,7 @@ for (const b of touchEl.querySelectorAll('.tb')) {
 }
 // Twin floating joysticks (left = move, right = aim & hold the beam), Brawl Stars style.
 let touchAim = null;                       // analog beam angle while the aim stick is dragged
-const STICK_R = 52, MOVE_DZ = 0.28, AIM_DZ = 14;
+const STICK_R = 40, MOVE_DZ = 0.28, AIM_DZ = 14;
 function makeStick(zoneId, stickId, home, onMove, onEnd, onStart) {
   const zone = document.getElementById(zoneId), stick = document.getElementById(stickId), knob = stick.firstElementChild;
   let id = null, ox = 0, oy = 0;
@@ -220,13 +220,13 @@ function makeStick(zoneId, stickId, home, onMove, onEnd, onStart) {
   addEventListener('resize', () => { if (id === null) goHome(); });
   goHome();
 }
-makeStick('moveZone', 'moveStick', () => ({ x: 110, y: innerHeight - 110 }),
+makeStick('moveZone', 'moveStick', () => ({ x: 76, y: innerHeight - 76 }),
   (dx, dy) => {
     vHeld.left = dx < -STICK_R * MOVE_DZ; vHeld.right = dx > STICK_R * MOVE_DZ;
     vHeld.up = dy < -STICK_R * 0.6; vHeld.down = dy > STICK_R * 0.6;
   },
   () => { vHeld.left = vHeld.right = vHeld.up = vHeld.down = false; });
-makeStick('aimZone', 'aimStick', () => ({ x: innerWidth - 110, y: innerHeight - 110 }),
+makeStick('aimZone', 'aimStick', () => ({ x: innerWidth - 80, y: innerHeight - 76 }),
   (dx, dy, d) => { touchAim = d > AIM_DZ ? Math.atan2(dy, dx) : null; },
   () => { vHeld.flash = false; touchAim = null; },
   () => { vHeld.flash = true; pressed.flash = true; touchAim = null; });
