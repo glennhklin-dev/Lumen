@@ -8,13 +8,24 @@
   html,body{margin:0;height:100%;background:#02060d;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
   #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
   #game{display:block;background:#050b16}
-  #touch{position:fixed;inset:0;pointer-events:none;display:none}
+  #touch{position:fixed;inset:0;pointer-events:none;display:none;-webkit-touch-callout:none}
+  .zone{position:absolute;top:0;bottom:0;pointer-events:auto;touch-action:none}
+  #moveZone{left:0;width:45%}
+  #aimZone{right:0;width:55%}
+  .stick{position:absolute;width:92px;height:92px;margin:-46px 0 0 -46px;border-radius:50%;box-sizing:border-box;
+         border:2px solid rgba(242,196,109,.4);background:rgba(242,196,109,.06);pointer-events:none;opacity:.22;transition:opacity .12s}
+  .stick.active{opacity:1;transition:none}
+  .knob{position:absolute;left:50%;top:50%;width:38px;height:38px;margin:-19px 0 0 -19px;border-radius:50%;box-sizing:border-box;
+        background:rgba(242,196,109,.28);border:2px solid rgba(242,196,109,.75)}
+  #aimStick{border-color:rgba(255,214,140,.55)}
+  #aimStick .knob{background:rgba(255,214,140,.5);box-shadow:0 0 18px rgba(255,200,110,.5)}
+  .tb{z-index:2}
   #touch.on{display:block}
-  .tb{position:absolute;pointer-events:auto;width:62px;height:62px;border-radius:50%;box-sizing:border-box;
+  .tb{position:absolute;pointer-events:auto;width:46px;height:46px;border-radius:50%;box-sizing:border-box;
       background:rgba(242,196,109,.10);border:2px solid rgba(242,196,109,.45);color:#f2c46d;
-      font:600 15px Georgia,serif;display:flex;align-items:center;justify-content:center;touch-action:none}
+      font:600 13px Georgia,serif;opacity:.75;display:flex;align-items:center;justify-content:center;touch-action:none}
   .tb.down{background:rgba(242,196,109,.35)}
-  .tb.big{width:78px;height:78px;font-size:17px}
+  .tb.big{width:58px;height:58px;font-size:14px}
   #tune{position:fixed;top:8px;right:8px;width:290px;max-height:calc(100% - 16px);overflow:auto;box-sizing:border-box;
         background:rgba(6,14,26,.94);border:1px solid #2c4a5c;border-radius:8px;color:#d9e6ea;font:12px/1.3 system-ui,sans-serif;padding:10px;z-index:5}
   #tune[hidden]{display:none}
@@ -33,14 +44,13 @@
 <div id="wrap"><canvas id="game" width="960" height="540"></canvas></div>
 
 <div id="touch">
-  <div class="tb" data-a="left"  style="left:16px;bottom:64px">◀</div>
-  <div class="tb" data-a="right" style="left:146px;bottom:64px">▶</div>
-  <div class="tb" data-a="up"    style="left:81px;bottom:126px">▲</div>
-  <div class="tb" data-a="down"  style="left:81px;bottom:4px">▼</div>
-  <div class="tb big" data-a="jump"  style="right:18px;bottom:28px">Jump</div>
-  <div class="tb big" data-a="flash" style="right:108px;bottom:72px">Light</div>
-  <div class="tb" data-a="interact"  style="right:32px;bottom:124px">E</div>
-  <div class="tb" data-a="pause"     style="right:16px;top:12px;width:46px;height:46px">II</div>
+  <div class="zone" id="moveZone"></div>
+  <div class="zone" id="aimZone"></div>
+  <div class="stick" id="moveStick"><div class="knob"></div></div>
+  <div class="stick" id="aimStick"><div class="knob"></div></div>
+  <div class="tb big" data-a="jump"  style="right:150px;bottom:18px">Jump</div>
+  <div class="tb" data-a="interact"  style="right:160px;bottom:90px">E</div>
+  <div class="tb" data-a="pause"     style="right:12px;top:10px;width:36px;height:36px">II</div>
 </div>
 
 <div id="tune" hidden>
@@ -90,6 +100,16 @@ const TDEF = [
   {k:'burnoutRelight',v:35,  min:0,   max:100,  s:1,    l:'Fuel needed after burnout'},
   {k:'killHitstop',  v:0.08, min:0,   max:0.3,  s:0.005,l:'Hit-stop on kill (s)'},
   {k:'pogoHeight',   v:2.4,  min:0.5, max:5,    s:0.05, l:'Pogo height (locked ability)'},
+  {g:'Murk pools (spawning)'},
+  {k:'mobCap',       v:7,    min:1,   max:20,   s:1,    l:'Mob cap (all Murklings alive)'},
+  {k:'poolCap',      v:2,    min:1,   max:6,    s:1,    l:'Alive per pool'},
+  {k:'spawnInterval',v:7,    min:1,   max:30,   s:0.5,  l:'Seconds between spawns'},
+  {k:'spawnTelegraph',v:0.8, min:0.1, max:2,    s:0.05, l:'Spawn warning (s)'},
+  {k:'spawnMinDist', v:140,  min:0,   max:400,  s:10,   l:'No spawn closer than (px)'},
+  {k:'spawnMaxDist', v:640,  min:200, max:1500, s:20,   l:'No spawn farther than (px)'},
+  {k:'poolBurnTime', v:2.5,  min:0.3, max:8,    s:0.1,  l:'Beam time to destroy a pool (s)'},
+  {k:'poolRegen',    v:0.5,  min:0,   max:3,    s:0.05, l:'Pool recovery when unlit (×)'},
+  {k:'poolEmbers',   v:3,    min:0,   max:8,    s:1,    l:'Embers dropped by a pool'},
   {g:'Getting hurt'},
   {k:'hurtInvuln',   v:1.1,  min:0.2, max:2.5,  s:0.05, l:'Invulnerability (s)'},
   {k:'hurtKnockX',   v:280,  min:0,   max:700,  s:10,   l:'Knockback X'},
@@ -126,7 +146,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.4.0';
+const VERSION = '0.7.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -174,6 +194,43 @@ for (const b of touchEl.querySelectorAll('.tb')) {
   b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off);
   b.addEventListener('pointercancel', off); b.addEventListener('lostpointercapture', off);
 }
+// Twin floating joysticks (left = move, right = aim & hold the beam), Brawl Stars style.
+let touchAim = null;                       // analog beam angle while the aim stick is dragged
+const STICK_R = 40, MOVE_DZ = 0.28, AIM_DZ = 14;
+function makeStick(zoneId, stickId, home, onMove, onEnd, onStart) {
+  const zone = document.getElementById(zoneId), stick = document.getElementById(stickId), knob = stick.firstElementChild;
+  let id = null, ox = 0, oy = 0;
+  const place = (x, y) => { stick.style.left = x + 'px'; stick.style.top = y + 'px'; };
+  const knobAt = (dx, dy) => { knob.style.transform = `translate(${dx}px,${dy}px)`; };
+  const goHome = () => { const h = home(); place(h.x, h.y); knobAt(0, 0); stick.classList.remove('active'); };
+  zone.addEventListener('pointerdown', e => {
+    if (id !== null) return;
+    e.preventDefault(); id = e.pointerId; try { zone.setPointerCapture(id); } catch (_) {}
+    ox = e.clientX; oy = e.clientY; place(ox, oy); knobAt(0, 0); stick.classList.add('active');
+    pressed.start = true; onStart && onStart();
+  });
+  zone.addEventListener('pointermove', e => {
+    if (e.pointerId !== id) return;
+    e.preventDefault();
+    let dx = e.clientX - ox, dy = e.clientY - oy; const d = Math.hypot(dx, dy);
+    if (d > STICK_R) { dx *= STICK_R / d; dy *= STICK_R / d; }
+    knobAt(dx, dy); onMove(dx, dy, d);
+  });
+  const end = e => { if (e.pointerId !== id) return; id = null; onEnd(); goHome(); };
+  zone.addEventListener('pointerup', end); zone.addEventListener('pointercancel', end); zone.addEventListener('lostpointercapture', end);
+  addEventListener('resize', () => { if (id === null) goHome(); });
+  goHome();
+}
+makeStick('moveZone', 'moveStick', () => ({ x: 76, y: innerHeight - 76 }),
+  (dx, dy) => {
+    vHeld.left = dx < -STICK_R * MOVE_DZ; vHeld.right = dx > STICK_R * MOVE_DZ;
+    vHeld.up = dy < -STICK_R * 0.6; vHeld.down = dy > STICK_R * 0.6;
+  },
+  () => { vHeld.left = vHeld.right = vHeld.up = vHeld.down = false; });
+makeStick('aimZone', 'aimStick', () => ({ x: innerWidth - 80, y: innerHeight - 76 }),
+  (dx, dy, d) => { touchAim = d > AIM_DZ ? Math.atan2(dy, dx) : null; },
+  () => { vHeld.flash = false; touchAim = null; },
+  () => { vHeld.flash = true; pressed.flash = true; touchAim = null; });
 canvas.addEventListener('pointerdown', () => { if (state === 'title' || state === 'end' || state === 'log') pressed.start = true; });
 
 function pollPad() {
@@ -253,9 +310,86 @@ function newPlayer() {
     masks: 5, maxMasks: 5, embers: 0, inv: 0, hurtLock: 0, hazard: 0, sx: 1, sy: 1,
     dropT: 0, dust: 0, anim: 0, lastSafe: { x: SPAWN.x, y: SPAWN.y }, maskLost: 0 };
 }
+const makeMurk = (px, extra) => ({ x: px, y: 20 * TILE - 20, w: 24, h: 20, vx: 0, vy: 0, dir: -1, hp: 1.6,
+  stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0, dead: false, t: Math.random() * 10, grounded: false, ...extra });
 function resetEnemies() {
-  enemies = MURK_DEF.map(x => ({ x: x * TILE + 4, y: 20 * TILE - 20, w: 24, h: 20, vx: 0, vy: 0, dir: -1, hp: 1.6,
-    stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0, dead: false, t: Math.random() * 10, grounded: false }));
+  enemies = MURK_DEF.map(x => makeMurk(x * TILE + 4));
+  resetPools();
+}
+
+/* Murk pools: dark spots that breed Murklings, limited by a global mob cap and a per-pool cap.
+   Burning a pool with the beam destroys it and frees the embers inside; its spawn drop none. */
+const POOL_DEF = [24, 64, 106];
+let pools = [], seenPool = false;
+function resetPools() { pools = POOL_DEF.map(x => ({ x, t: rnd(2, T.spawnInterval), tele: 0, burn: 0, dead: false })); }
+const poolCx = pl => (pl.x + 0.5) * TILE;
+function tickPools(dt) {
+  const pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
+  let pending = enemies.filter(e => !e.dead).length + pools.filter(pl => pl.tele > 0).length;
+  for (const pl of pools) {
+    const cx = poolCx(pl), gy = 20 * TILE;
+    if (pl.dead) continue;
+    if (Math.random() < dt * 6) burst(cx + rnd(-18, 18), gy - 2, 1, { color: '#1b1533', ang: -Math.PI / 2, spread: 0.3, smin: 10, smax: 40, g: -30, lmin: 0.6, lmax: 1.2, zmin: 2, zmax: 4 });
+    if (inPlayerBeam(cx, gy - 8, 16)) {               // light burns the pool away
+      pl.burn += dt; if (pl.tele > 0) { pl.tele = 0; pending--; }
+      addShake(T.shakeHit * 0.4);
+      if (Math.random() < dt * 30) burst(cx + rnd(-16, 16), gy - 4, 1, { color: '#cfc4ff', ang: -Math.PI / 2, spread: 0.6, smin: 30, smax: 120, lmin: 0.2, lmax: 0.4, add: true });
+      if (pl.burn >= T.poolBurnTime) {
+        pl.dead = true; stats.kills++;
+        freeze = Math.max(freeze, T.killHitstop * 1.5); addShake(T.shakeKill * 1.3);
+        burst(cx, gy - 6, 34, { color: '#1b1533', smin: 40, smax: 240, lmin: 0.4, lmax: 1, zmin: 2, zmax: 6, g: -80 });
+        burst(cx, gy - 6, 22, { color: '#cfc4ff', add: true, smin: 60, smax: 260, lmin: 0.3, lmax: 0.6 });
+        for (let i = 0; i < T.poolEmbers; i++) embers.push({ x: cx - 3 + rnd(-8, 8), y: gy - 14, w: 6, h: 6, vx: rnd(-90, 90), vy: -rnd(160, 260), t: 0, life: 15 });
+        if (!seenPool) { seenPool = true; toast('The murk pool burns away, freeing the embers it held.', 2.6); }
+      }
+      continue;
+    }
+    pl.burn = Math.max(0, pl.burn - T.poolRegen * dt);
+    if (pl.tele > 0) {
+      pl.tele -= dt;
+      if (pl.tele <= 0) {
+        const e = makeMurk(cx - 12, { pool: pl, spawned: true, vy: -280, lungeCD: 1.2, dir: Math.sign(pcx - cx) || 1 });
+        enemies.push(e);
+        burst(cx, gy - 6, 16, { color: '#1b1533', ang: -Math.PI / 2, spread: 0.9, smin: 40, smax: 180, lmin: 0.3, lmax: 0.7, zmin: 2, zmax: 5 });
+      }
+      continue;
+    }
+    pl.t -= dt;
+    if (pl.t > 0) continue;
+    const d = Math.hypot(pcx - cx, pcy - (gy - 10));
+    const mine = enemies.filter(e => !e.dead && e.pool === pl).length;
+    const warmed = lamps.some(l => l.lit && l.charges > 0 && Math.abs((l.x + 0.5) * TILE - cx) < T.lampRadius + 20);
+    if (pending < T.mobCap && mine < T.poolCap && d > T.spawnMinDist && d < T.spawnMaxDist && !warmed && P.hazard <= 0) {
+      pl.tele = T.spawnTelegraph; pending++;
+      pl.t = T.spawnInterval * rnd(0.8, 1.25);
+    } else pl.t = 0.8;                                   // conditions not met: check again shortly
+  }
+  enemies = enemies.filter(e => !(e.dead && e.spawned));
+}
+function drawPools() {
+  const gy = 20 * TILE;
+  for (const pl of pools) {
+    if (pl.dead) { ctx.fillStyle = 'rgba(40,34,50,.6)'; ctx.fillRect(poolCx(pl) - 18, gy - 1, 36, 2); continue; }   // scorch mark
+    const cx = poolCx(pl), k = pl.tele > 0 ? 1 - pl.tele / T.spawnTelegraph : 0, b = clamp(pl.burn / T.poolBurnTime, 0, 1);
+    const sc = (1 + 0.45 * k) * (1 - 0.5 * b);
+    ctx.fillStyle = b > 0 ? `rgb(${5 + 60 * b | 0},${3 + 40 * b | 0},${12 + 70 * b | 0})` : '#05030c';
+    ctx.beginPath(); ctx.moveTo(cx - 28 * sc, gy + 1);
+    for (let i = 0; i <= 18; i++) {
+      const a = Math.PI + (i / 18) * Math.PI, wob = Math.sin(time * (4 + 14 * b) + i * 1.3 + pl.x) * (1.5 + 2 * b);
+      ctx.lineTo(cx + Math.cos(a) * (28 * sc + wob), gy + 1 + Math.sin(a) * (8 * sc + wob + 6 * k));
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = `rgba(${130 + 120 * b | 0},${90 + 120 * b | 0},220,${0.45 + 0.4 * Math.max(k, b)})`; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+}
+function drawPoolEyes() {
+  for (const pl of pools) {
+    if (pl.tele <= 0) continue;
+    const k = 1 - pl.tele / T.spawnTelegraph, cx = poolCx(pl), y = 20 * TILE - 4 - 10 * k;
+    ctx.globalAlpha = k; ctx.fillStyle = '#d9d0ff';
+    ctx.beginPath(); ctx.ellipse(cx - 4, y, 2, 2.4, 0, 0, 7); ctx.ellipse(cx + 4, y, 2, 2.4, 0, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
 }
 function newGame() {
   buildLevel();
@@ -353,7 +487,7 @@ function inPlayerBeam(x, y, pad = 0) {
   const k = clamp(Math.round((clamp(diff, -half, half) + half) / (2 * half) * (RAYS - 1)), 0, RAYS - 1);
   return d <= p.rays[k].len + pad;
 }
-function aimTarget(p, ix, U, D) { let ax = ix; const ay = (D ? 1 : 0) - (U ? 1 : 0); if (!ax && !ay) ax = p.facing; return Math.atan2(ay, ax); }
+function aimTarget(p, ix, U, D) { if (touchAim !== null) return touchAim; let ax = ix; const ay = (D ? 1 : 0) - (U ? 1 : 0); if (!ax && !ay) ax = p.facing; return Math.atan2(ay, ax); }
 function sweepToward(p, target, dt) {
   let diff = angDiff(target, p.beamAng);
   if (Math.abs(diff) > Math.PI * 0.9) // reversing: sweep over the head, not through the floor
@@ -406,7 +540,7 @@ function burnEnemy(e, p, dt) {
     freeze = Math.max(freeze, T.killHitstop); addShake(T.shakeKill);
     burst(ex, ey, 26, { color: '#1b1533', smin: 40, smax: 200, lmin: 0.4, lmax: 0.9, zmin: 2, zmax: 6, g: -60 });
     burst(ex, ey, 14, { color: '#cfc4ff', smin: 60, smax: 240, lmin: 0.2, lmax: 0.5, add: true });
-    if (Math.random() < T.emberChance) embers.push({ x: ex - 3, y: ey - 3, w: 6, h: 6, vx: rnd(-50, 50), vy: -rnd(140, 220), t: 0, life: 15 });
+    if (!e.spawned && Math.random() < T.emberChance) embers.push({ x: ex - 3, y: ey - 3, w: 6, h: 6, vx: rnd(-50, 50), vy: -rnd(140, 220), t: 0, life: 15 });
   }
 }
 function rotateMirror(m) {
@@ -461,6 +595,7 @@ function tickPlayer(dt) {
 
   if (p.hurtLock > 0) ix = 0;
   if (ix !== 0) p.facing = ix;
+  else if (p.beamOn && touchAim !== null && Math.abs(Math.cos(touchAim)) > 0.3) p.facing = Math.cos(touchAim) > 0 ? 1 : -1;
 
   // Horizontal
   let a = p.grounded ? (ix ? T.groundAccel : T.groundDecel) : (ix ? T.airAccel : T.airDecel);
@@ -646,6 +781,7 @@ function tick(dt) {
   traceBeam();
   tickEnemies(dt);
   if (state !== 'play') return;
+  tickPools(dt);
 
   // Mirrors animate toward their angle
   for (const m of mirrors) { const t = m.d === '/' ? -Math.PI / 4 : Math.PI / 4; m.ang += (t - m.ang) * Math.min(1, dt * 14); }
@@ -948,6 +1084,7 @@ function drawProps() {
       ctx.fillStyle = `rgb(${(120 * soot + 135 * k) | 0},${(60 * soot + 120 * k) | 0},${(30 * soot + 40 * k) | 0})`; ctx.fillRect(px - 1.5, fy + 2, 3, 4);
     }
   }
+  drawPools();
   // Beacons
   for (const b of beacons) {
     const px = (b.x + 0.5) * TILE, py = 20 * TILE;
@@ -1040,6 +1177,15 @@ function render() {
     g.addColorStop(0, `rgba(0,0,0,${l.i})`); g.addColorStop(0.55, `rgba(0,0,0,${l.i * 0.75})`); g.addColorStop(1, 'rgba(0,0,0,0)');
     dctx.fillStyle = g; dctx.fillRect(l.x - l.r, l.y - l.r, l.r * 2, l.r * 2);
   }
+  // Murk pools swallow nearby light (only the beam cuts through them)
+  dctx.globalCompositeOperation = 'source-over';
+  for (const pl of pools) {
+    if (pl.dead) continue;
+    const cx = poolCx(pl), cy = 20 * TILE - 16, g = dctx.createRadialGradient(cx, cy, 0, cx, cy, 75);
+    g.addColorStop(0, 'rgba(3,2,10,.75)'); g.addColorStop(1, 'rgba(3,2,10,0)');
+    dctx.fillStyle = g; dctx.fillRect(cx - 75, cy - 75, 150, 150);
+  }
+  dctx.globalCompositeOperation = 'destination-out';
   const beaming = P.beamOn && P.rays && state !== 'dying';
   if (beaming) {
     renderBeamMask(ox, oy);
@@ -1074,6 +1220,7 @@ function render() {
       if (l.charges > 0) { ctx.save(); ctx.translate(fx, 20 * TILE - 2); ctx.scale(1, 0.22); glow(0, 0, T.lampRadius, `rgba(255,180,90,${0.22 * l.glow})`); ctx.restore(); }
     }
   }
+  for (const pl of pools) if (pl.tele > 0) glow(poolCx(pl), 20 * TILE - 8, 46, `rgba(140,90,255,${0.4 * (1 - pl.tele / T.spawnTelegraph)})`);
   // Kindling progress ring (with a capacity mark if the lamp is beyond the lantern's tank)
   for (const l of lamps) {
     if (l.lit || l.kindle <= 0) continue;
@@ -1096,6 +1243,7 @@ function render() {
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
   for (const e of enemies) if (!e.dead) drawMurkEyes(e);
+  drawPoolEyes();
   drawPrompts();
   ctx.restore();
 
@@ -1251,7 +1399,7 @@ function drawLog() {
 const CONTROLS = [
   ['Move', '← →  /  A D'], ['Aim up / down', '↑ ↓  /  W S'], ['Jump (hold = higher)', 'Space / Z / K'],
   ['Lantern beam (hold)', 'X / J   — aim with ↑ ↓ ← →'], ['Read / turn mirror', 'E / C'],
-  ['Pause', 'Esc / P'], ['Feel tuning panel', 'T'],
+  ['Pause', 'Esc / P'], ['Feel tuning panel', 'T'], ['Touch', 'left stick move · right stick aim & hold light'],
 ];
 function drawControls(x, y) {
   ctx.font = `15px ${FONT}`;
@@ -1359,7 +1507,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Small hook for automated testing / debugging in the console.
-window.__lumen = { T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
+window.__lumen = { T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
 })();
 </script>
 </body>
