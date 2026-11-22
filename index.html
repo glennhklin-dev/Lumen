@@ -101,7 +101,10 @@ const TDEF = [
   {k:'killHitstop',  v:0.08, min:0,   max:0.3,  s:0.005,l:'Hit-stop on kill (s)'},
   {k:'pogoHeight',   v:2.4,  min:0.5, max:5,    s:0.05, l:'Pogo height (locked ability)'},
   {g:'Murk pools (spawning)'},
-  {k:'mobCap',       v:5,    min:1,   max:20,   s:1,    l:'Mob cap (all Murklings alive)'},
+  {k:'mobCap',       v:5,    min:1,   max:20,   s:1,    l:'Mob cap (nearby enemies alive)'},
+  {k:'threatDist',   v:700,  min:200, max:2000, s:20,   l:'Enemies count toward cap within (px)'},
+  {k:'despawnDist',  v:1000, min:300, max:3000, s:20,   l:'Spawned mobs fade beyond (px)'},
+  {k:'despawnDelay', v:3,    min:0,   max:15,   s:0.5,  l:'…after this long out of sight (s)'},
   {k:'poolCap',      v:2,    min:1,   max:6,    s:1,    l:'Alive per pool'},
   {k:'spawnInterval',v:12,   min:1,   max:30,   s:0.5,  l:'Seconds between spawns'},
   {k:'spawnTelegraph',v:0.8, min:0.1, max:2,    s:0.05, l:'Spawn warning (s)'},
@@ -145,7 +148,7 @@ const TDEF = [
 ];
 const T = {};
 for (const d of TDEF) if (d.k) T[d.k] = d.v;
-const TKEY = 'lumen.tuning.v4';
+const TKEY = 'lumen.tuning.v5';
 try { const s = JSON.parse(localStorage.getItem(TKEY) || '{}'); for (const k in s) if (k in T) T[k] = +s[k]; } catch (e) {}
 const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } catch (e) {} };
 
@@ -153,7 +156,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.9.3';
+const VERSION = '0.10.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -238,7 +241,7 @@ makeStick('aimZone', 'aimStick', () => ({ x: innerWidth - 80, y: innerHeight - 7
   (dx, dy, d) => { touchAim = d > AIM_DZ ? Math.atan2(dy, dx) : null; },
   () => { vHeld.flash = false; touchAim = null; },
   () => { vHeld.flash = true; pressed.flash = true; touchAim = null; });
-canvas.addEventListener('pointerdown', () => { if (state === 'title' || state === 'end') pressed.start = true; else if (logOpen) pressed.interact = true; });
+canvas.addEventListener('pointerdown', () => { if (state === 'title' || state === 'end' || state === 'reveal') pressed.start = true; else if (logOpen) pressed.interact = true; });
 
 function pollPad() {
   const gps = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -345,6 +348,7 @@ let upgrades = { got: new Set(), fuel: 0 };
    World state
    ===================================================================== */
 let seenBurnout = false;
+let reveal = null;
 let state = 'title', time = 0, freeze = 0, shake = 0, fade = 0, stateT = 0;
 let lamps = [], embers = [], seenLamp = false, seenEmber = false;
 let P, enemies, beacons, mirrors, particles, toasts, crystal, door, checkpoint, beam, logOpen, stats;
@@ -377,11 +381,34 @@ function resetEnemies() {
 const POOL_DEF = [{ x: 24, gy: 40 }, { x: 64, gy: 40 }, { x: 106, gy: 40 }, { x: 68, gy: 18 }, { x: 108, gy: 56 }, { x: 176, gy: 56 }];
 let pools = [], seenPool = false;
 let seeps = [];   // pending spawns rising out of dark ground
+/* Far-away spawned Murklings fade out so the mob cap goes to ones that can actually reach you.
+   Placed enemies (level design) never despawn; they only count toward the cap when near. */
+const pDist = e => Math.hypot(e.x + e.w / 2 - (P.x + P.w / 2), e.y + e.h / 2 - (P.y + P.h / 2));
+const onScreen = e => e.x + e.w > cam.x - 40 && e.x < cam.x + VW + 40 && e.y + e.h > cam.y - 40 && e.y < cam.y + VH + 40;
+function nearbyMobs() {
+  return enemies.filter(e => !e.dead && (e.spawned || pDist(e) < T.threatDist)).length
+    + pools.filter(pl => pl.tele > 0).length + seeps.length;
+}
+function despawnFar(dt) {
+  for (const e of enemies) {
+    if (e.dead || !e.spawned) continue;
+    e.awayT = !onScreen(e) && pDist(e) > T.despawnDist ? (e.awayT || 0) + dt : 0;
+    if (e.awayT > T.despawnDelay) { e.dead = true; e.despawned = true; }
+  }
+}
+// At the cap, make room by retiring the farthest spawned mob that is out of sight and out of reach.
+function makeRoom() {
+  let far = null, fd = T.threatDist;
+  for (const e of enemies) { if (e.dead || !e.spawned || onScreen(e)) continue; const d = pDist(e); if (d > fd) { fd = d; far = e; } }
+  if (far) { far.dead = true; far.despawned = true; return true; }
+  return false;
+}
 function resetPools() { seeps = []; darkT = 3; pools = POOL_DEF.map(d => ({ x: d.x, gy: d.gy, t: rnd(2, T.spawnInterval), tele: 0, burn: 0, dead: false })); }
 const poolCx = pl => (pl.x + 0.5) * TILE;
 function tickPools(dt) {
   const pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
-  let pending = enemies.filter(e => !e.dead).length + pools.filter(pl => pl.tele > 0).length;
+  despawnFar(dt);
+  let pending = nearbyMobs();
   for (const pl of pools) {
     const cx = poolCx(pl), gy = pl.gy * TILE;
     if (pl.dead) continue;
@@ -415,6 +442,7 @@ function tickPools(dt) {
     const d = Math.hypot(pcx - cx, pcy - (gy - 10));
     const mine = enemies.filter(e => !e.dead && e.pool === pl).length;
     const warmed = lamps.some(l => l.lit && l.charges > 0 && Math.abs((l.x + 0.5) * TILE - cx) < T.lampRadius + 20);
+    if (pending >= T.mobCap && mine < T.poolCap && d > T.spawnMinDist && d < T.spawnMaxDist && makeRoom()) pending--;
     if (pending < T.mobCap && mine < T.poolCap && d > T.spawnMinDist && d < T.spawnMaxDist && !warmed && P.hazard <= 0) {
       pl.tele = T.spawnTelegraph; pending++;
       pl.t = T.spawnInterval * rnd(0.8, 1.25);
@@ -470,9 +498,9 @@ function tickDarkSpawns(dt) {
   darkT -= dt;
   if (darkT > 0) return;
   darkT = T.darkInterval * rnd(0.7, 1.3);
-  const alive = enemies.filter(e => !e.dead).length + pools.filter(pl => pl.tele > 0).length + seeps.length;
+  if (nearbyMobs() >= T.mobCap && !makeRoom()) return;
   const darkAlive = enemies.filter(e => !e.dead && e.dark).length + seeps.length;
-  if (alive >= T.mobCap || darkAlive >= T.darkCap || P.hazard > 0) return;
+  if (darkAlive >= T.darkCap || P.hazard > 0) return;
   const g = findDarkGround();
   if (g) seeps.push({ x: g.x, y: g.y, t: T.spawnTelegraph + 0.3, max: T.spawnTelegraph + 0.3 });
 }
@@ -962,6 +990,12 @@ function tick(dt) {
   if (state === 'title') { if (take('start') || take('jump') || take('flash')) { newGame(); state = 'play'; fade = 1; clearPressed(); } return; }
   if (state === 'end') { stateT += dt; if (stateT > 1 && (take('start') || take('jump'))) { state = 'title'; clearPressed(); } return; }
   if (state === 'pause') { if (take('pause') || take('start')) { state = 'play'; clearPressed(); } return; }
+  if (state === 'reveal') {
+    stateT += dt; tickParticles(dt);
+    const go = take('jump') | take('interact') | take('flash') | take('start') | take('pause');
+    if (stateT > 2.2 && go) { state = 'play'; clearPressed(); toast(`${reveal.u.name}: +${reveal.to - reveal.from} lantern oil.`, 2.4); }
+    return;
+  }
   if (state === 'dying') { stateT += dt; tickParticles(dt); if (stateT > 1.5) respawnAtCheckpoint(); return; }
 
   // play
@@ -1023,9 +1057,11 @@ function tick(dt) {
   UPG_DEF.forEach((u, i) => {
     if (upgrades.got.has(i)) return;
     if (Math.abs((u.x + 0.5) * TILE - pcx) < 22 && Math.abs(u.gy * TILE - 14 - pcy) < 30) {
-      upgrades.got.add(i); upgrades.fuel += u.amt; P.maxFuel += u.amt; P.fuel = P.maxFuel; addShake(4);
-      burst((u.x + 0.5) * TILE, u.gy * TILE - 14, 30, { color: '#f2b347', add: true, smin: 60, smax: 240 });
-      toast(`${u.name}: your lantern holds more oil (+${u.amt}).`, 3);
+      const from = P.maxFuel;
+      upgrades.got.add(i); upgrades.fuel += u.amt; P.maxFuel += u.amt; P.fuel = P.maxFuel; P.beamOn = false; addShake(8);
+      burst((u.x + 0.5) * TILE, u.gy * TILE - 14, 60, { color: '#f2b347', add: true, smin: 80, smax: 360, lmin: 0.5, lmax: 1.2 });
+      reveal = { u, from, to: P.maxFuel, x: (u.x + 0.5) * TILE - cam.x, y: u.gy * TILE - 14 - cam.y };
+      state = 'reveal'; stateT = 0; clearPressed();
     }
   });
 
@@ -1554,6 +1590,7 @@ function render() {
   if (state === 'dying' && stateT > 0.5) { ctx.fillStyle = `rgba(233,220,184,${clamp((stateT - 0.5) * 2, 0, 1)})`; ctx.font = `italic 24px ${FONT}`; ctx.textAlign = 'center'; ctx.fillText('The light gutters… and returns to the last beacon.', VW / 2, VH / 2); }
   if (logOpen && state === 'play') drawLog();
   if (state === 'pause') drawPause();
+  if (state === 'reveal') drawReveal();
   if (state === 'end' && stateT > 0) drawEnd();
 }
 function forVisibleTiles(fn) {
@@ -1748,6 +1785,52 @@ function drawPause() {
   drawControls(VW / 2, 180);
   ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(233,220,184,.6)'; ctx.font = `italic 14px ${FONT}`; ctx.fillText('Esc / P to resume', VW / 2, 410);
   drawVersion();
+}
+// Upgrade found: the world dims, the flask rises into a halo of rays, and the fuel gauge grows.
+function drawFlask(c, x, y, k) {
+  c.save(); c.translate(x, y); c.scale(k, k);
+  c.fillStyle = '#3a2c1c'; c.fillRect(-3, -13, 6, 4);
+  c.fillStyle = '#6b5434'; c.beginPath(); c.moveTo(-3, -9); c.lineTo(-8, -2); c.lineTo(-8, 8); c.lineTo(8, 8); c.lineTo(8, -2); c.lineTo(3, -9); c.closePath(); c.fill();
+  c.fillStyle = '#f2b347'; c.fillRect(-6, 0, 12, 7);
+  c.fillStyle = 'rgba(255,240,200,.55)'; c.fillRect(-5, -1, 2, 7);
+  c.restore();
+}
+function drawReveal() {
+  const t = stateT, r = reveal, ease = v => 1 - Math.pow(1 - clamp(v, 0, 1), 3);
+  const dim = ease(t / 0.5), cx = VW / 2, cy = 190;
+  ctx.fillStyle = `rgba(1,3,8,${0.82 * dim})`; ctx.fillRect(0, 0, VW, VH);
+  // flask flies from where it was picked up to centre stage
+  const m = ease((t - 0.1) / 0.8), fx = r.x + (cx - r.x) * m, fy = r.y + (cy - r.y) * m - Math.sin(m * Math.PI) * 60;
+  const halo = ease((t - 0.6) / 0.6);
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(fx, fy, 0, fx, fy, 150 * halo + 1);
+  g.addColorStop(0, `rgba(255,214,140,${0.55 * halo})`); g.addColorStop(1, 'rgba(255,170,60,0)');
+  ctx.fillStyle = g; ctx.fillRect(fx - 160, fy - 160, 320, 320);
+  ctx.translate(fx, fy); ctx.rotate(time * 0.35);
+  for (let i = 0; i < 12; i++) {
+    ctx.rotate(Math.PI / 6); const L = (88 + 18 * Math.sin(time * 2 + i)) * halo;
+    ctx.fillStyle = `rgba(255,220,150,${0.13 * halo})`;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(L, -9); ctx.lineTo(L, 9); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+  drawFlask(ctx, fx, fy + Math.sin(time * 2.2) * 3 * halo, 1 + 3.2 * ease((t - 0.1) / 0.9));
+  // title card
+  const a1 = ease((t - 0.9) / 0.5);
+  ctx.globalAlpha = a1; ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(233,220,184,.7)'; ctx.font = `italic 14px ${FONT}`; ctx.fillText('— Lantern upgrade found —', cx, 292);
+  ctx.fillStyle = '#f2c46d'; ctx.font = `bold ${34 + 6 * (1 - a1)}px ${FONT}`; ctx.fillText(r.u.name.toUpperCase().split('').join(' '), cx, 334);
+  ctx.fillStyle = '#e3d8bd'; ctx.font = `16px ${FONT}`; ctx.fillText('Your lantern holds more oil. The beam burns longer.', cx, 364);
+  // fuel gauge growing from old to new capacity
+  const a2 = ease((t - 1.2) / 0.3), grow = ease((t - 1.4) / 0.7), bw = 3.2, bx = cx - r.to * bw / 2, by = 392;
+  ctx.globalAlpha = a2;
+  ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(bx - 3, by - 3, r.to * bw + 6, 20);
+  ctx.fillStyle = '#c98a2c'; ctx.fillRect(bx, by, r.from * bw, 14);
+  ctx.fillStyle = `rgba(255,214,120,${0.75 + 0.25 * Math.sin(time * 8)})`; ctx.fillRect(bx + r.from * bw, by, (r.to - r.from) * bw * grow, 14);
+  ctx.strokeStyle = 'rgba(242,196,109,.7)'; ctx.lineWidth = 1; ctx.strokeRect(bx - 3.5, by - 3.5, r.to * bw + 7, 21);
+  ctx.fillStyle = '#e9dcb8'; ctx.font = `bold 15px ${FONT}`;
+  ctx.fillText(`Oil ${Math.round(r.from + (r.to - r.from) * grow)}  (+${r.to - r.from})`, cx, by + 40);
+  if (t > 2.2) { ctx.globalAlpha = 0.55 + 0.45 * Math.sin(time * 3); ctx.fillStyle = '#f2c46d'; ctx.font = `italic 14px ${FONT}`; ctx.fillText('Press Jump, E, or tap to continue', cx, 480); }
+  ctx.globalAlpha = 1;
 }
 function drawEnd() {
   const a = clamp(stateT / 1.2, 0, 1);
