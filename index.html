@@ -163,7 +163,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.13.0';
+const VERSION = '0.13.1';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -1806,13 +1806,11 @@ function renderBeamMask(ox, oy) {
 function drawBeam() {
   const p = P, o = p.beamO, R = T.beamRange;
   const fl = p.fuel < 20 ? 0.55 + 0.45 * Math.random() : 0.94 + 0.06 * Math.sin(time * 31);
+  // The beam lights the world the way the lantern does: the darkness is cut away (in the darkness
+  // pass) so things show their own colours, with only the lantern's faint warm tint on top.
   ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
-  // 1) Illuminate: brighten what the beam falls on, keeping its own colours.
-  ctx.globalCompositeOperation = 'color-dodge'; ctx.globalAlpha = 0.85 * fl;
-  tintMask('rgb(150,132,104)'); ctx.drawImage(tintCv, 0, 0);
-  // 2) Warm haze in the air.
-  ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.42 * fl;
-  tintMask('rgb(255,214,150)'); ctx.drawImage(tintCv, 0, 0);
+  ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.13 * fl;
+  tintMask('rgb(255,190,90)'); ctx.drawImage(tintCv, 0, 0);
   ctx.restore();
   // 3) Warm pools where the light lands on rock, and a small bloom at the lantern.
   for (let i = 0; i < RAYS; i += 2) {
