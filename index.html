@@ -163,7 +163,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.15.0';
+const VERSION = '0.15.1';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -1185,7 +1185,9 @@ function tick(dt) {
 
   // Reading a Keeper's Log holds you and the Murk still; the world itself keeps breathing.
   if (logOpen) {
-    P.beamOn = false; P.vx = 0;
+    P.beamOn = false; P.vx = 0; P.rays = null; P.spotLen = null;
+    P.regenT -= dt; if (P.regenT <= 0) P.fuel = Math.min(P.maxFuel, P.fuel + T.fuelRegen * dt);   // the flame still breathes
+    if (P.burnout && P.fuel >= T.burnoutRelight) P.burnout = false;
     if (take('interact') || take('jump') || take('flash') || take('start')) { logOpen = null; clearPressed(); }
   } else tickPlayer(dt);
   if (state !== 'play') return;
