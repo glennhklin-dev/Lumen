@@ -153,7 +153,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.9.0';
+const VERSION = '0.9.3';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -238,7 +238,7 @@ makeStick('aimZone', 'aimStick', () => ({ x: innerWidth - 80, y: innerHeight - 7
   (dx, dy, d) => { touchAim = d > AIM_DZ ? Math.atan2(dy, dx) : null; },
   () => { vHeld.flash = false; touchAim = null; },
   () => { vHeld.flash = true; pressed.flash = true; touchAim = null; });
-canvas.addEventListener('pointerdown', () => { if (state === 'title' || state === 'end' || state === 'log') pressed.start = true; });
+canvas.addEventListener('pointerdown', () => { if (state === 'title' || state === 'end') pressed.start = true; else if (logOpen) pressed.interact = true; });
 
 function pollPad() {
   const gps = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -352,7 +352,7 @@ const cam = { x: 0, y: 0, look: 0 };
 
 function newPlayer() {
   return { x: SPAWN.x, y: SPAWN.y, w: 18, h: 28, vx: 0, vy: 0, facing: 1, grounded: false, coyote: 0, jumpBuf: 0, jumping: false,
-    fuel: T.fuelMax + upgrades.fuel, maxFuel: T.fuelMax + upgrades.fuel, beamOn: false, beamAng: 0, burnout: false, regenT: 0, rays: null, beamO: null, pogoCD: 0,
+    fuel: T.fuelMax + upgrades.fuel, maxFuel: T.fuelMax + upgrades.fuel, beamOn: false, beamAng: 0, beamAge: 0, prevTouchAim: null, burnout: false, regenT: 0, rays: null, beamO: null, pogoCD: 0,
     masks: 5, maxMasks: 5, embers: 0, inv: 0, hurtLock: 0, hazard: 0, sx: 1, sy: 1,
     dropT: 0, dust: 0, anim: 0, lastSafe: { x: SPAWN.x, y: SPAWN.y }, maskLost: 0 };
 }
@@ -517,7 +517,7 @@ function newGame() {
   hidden = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (grid[y][x] === '=') hidden.push({ x, y, a: 0, lit: false });
   upgrades = { got: new Set(), fuel: 0 };
-  P = newPlayer();
+  P = newPlayer(); logOpen = null;
   resetEnemies(); resetLamps(); embers = [];
   beacons = BEACON_DEF.map(d => ({ x: d.x, gy: d.gy, lit: false, final: !!d.final, glow: 0, near: false }));
   upgrades = { got: new Set(), fuel: 0 };
@@ -644,7 +644,7 @@ function die() {
 function resetLamps() { lamps = LAMP_DEF.map(d => ({ x: d.x, gy: d.gy, kindle: 0, lit: false, charges: T.lampCharges, healT: 0, glow: 0, lights: 0, warned: false })); }
 function respawnAtCheckpoint() {
   const keepEmbers = P.embers;
-  P = newPlayer(); P.embers = keepEmbers; embers = [];
+  P = newPlayer(); P.embers = keepEmbers; embers = []; logOpen = null;
   P.x = checkpoint.x; P.y = checkpoint.y; P.lastSafe = { ...checkpoint };
   resetEnemies(); snapCam(); clearPressed();
   state = 'play'; fade = 1;
@@ -710,14 +710,17 @@ function tickPlayer(dt) {
   const target = aimTarget(p, ix, U, D);
   if (want && !p.beamOn) {
     if (p.fuel > T.igniteCost) {
-      p.beamOn = true; p.fuel -= T.igniteCost; p.beamAng = target;
+      p.beamOn = true; p.fuel -= T.igniteCost; p.beamAng = target; p.beamAge = 0;
       const o = beamOrigin(p); addShake(1.5);
       burst(o.x, o.y, 10, { color: '#ffe3a1', ang: target, spread: 0.5, smin: 80, smax: 260, lmin: 0.15, lmax: 0.3, add: true });
     }
   }
   if (p.beamOn && !want) p.beamOn = false;
   if (p.beamOn) {
-    sweepToward(p, target, dt);
+    // A freshly lit beam (or a fresh touch-stick drag) points straight where you aim; after that it sweeps.
+    p.beamAge += dt;
+    if (p.beamAge < 0.15 || (touchAim !== null && p.prevTouchAim === null)) p.beamAng = target;
+    else sweepToward(p, target, dt);
     p.fuel -= T.fuelDrain * dt; p.regenT = T.regenDelay;
     if (p.fuel <= 0) {
       p.fuel = 0; p.beamOn = false; p.burnout = true;
@@ -728,6 +731,7 @@ function tickPlayer(dt) {
     p.regenT -= dt;
     if (p.regenT <= 0) p.fuel = Math.min(p.maxFuel, p.fuel + T.fuelRegen * dt);
   }
+  p.prevTouchAim = touchAim;
   if (p.burnout && p.fuel >= T.burnoutRelight) p.burnout = false;
   if (p.burnout && isHeld('flash') && Math.random() < dt * 12) { const o = beamOrigin(p); burst(o.x, o.y, 1, { color: '#a08060', g: -30, smin: 10, smax: 40, lmin: 0.3, lmax: 0.6 }); }
 
@@ -957,12 +961,11 @@ function tick(dt) {
   if (take('tune')) toggleTune();
   if (state === 'title') { if (take('start') || take('jump') || take('flash')) { newGame(); state = 'play'; fade = 1; clearPressed(); } return; }
   if (state === 'end') { stateT += dt; if (stateT > 1 && (take('start') || take('jump'))) { state = 'title'; clearPressed(); } return; }
-  if (state === 'log') { if (take('interact') || take('jump') || take('flash') || take('start') || take('pause')) { state = 'play'; clearPressed(); } return; }
   if (state === 'pause') { if (take('pause') || take('start')) { state = 'play'; clearPressed(); } return; }
   if (state === 'dying') { stateT += dt; tickParticles(dt); if (stateT > 1.5) respawnAtCheckpoint(); return; }
 
   // play
-  if (take('pause')) { state = 'pause'; return; }
+  if (take('pause')) { if (logOpen) logOpen = null; else state = 'pause'; return; }
   if (freeze > 0) { freeze -= dt; return; }
   time += dt; stats.time += dt;
   fade = Math.max(0, fade - dt * 2);
@@ -974,12 +977,19 @@ function tick(dt) {
     h.a = approach(h.a, h.lit ? 1 : 0, dt * 7);
   }
 
-  tickPlayer(dt);
+  // Reading a Keeper's Log holds you and the Murk still; the world itself keeps breathing.
+  if (logOpen) {
+    P.beamOn = false; P.vx = 0;
+    if (take('interact') || take('jump') || take('flash') || take('start')) { logOpen = null; clearPressed(); }
+  } else tickPlayer(dt);
   if (state !== 'play') return;
   traceBeam();
-  tickEnemies(dt);
-  if (state !== 'play') return;
-  tickPools(dt); tickDarkSpawns(dt);
+  // While a Keeper's Log is open the world keeps moving, but the Murk holds still.
+  if (!logOpen) {
+    tickEnemies(dt);
+    if (state !== 'play') return;
+    tickPools(dt); tickDarkSpawns(dt);
+  }
 
   // Mirrors animate toward their angle
   for (const m of mirrors) { const t = m.d === '/' ? -Math.PI / 4 : Math.PI / 4; m.ang += (t - m.ang) * Math.min(1, dt * 14); }
@@ -1022,7 +1032,7 @@ function tick(dt) {
   // Interact: read lore stones or turn mirrors
   if (take('interact')) {
     const lore = LORE.find(l => Math.abs((l.x + 0.5) * TILE - pcx) < 40 && Math.abs((l.gy - 0.5) * TILE - pcy) < 50);
-    if (lore) { logOpen = lore; state = 'log'; clearPressed(); }
+    if (lore) { logOpen = lore; clearPressed(); }
     else {
       let best = null, bd = 2.7 * TILE;
       for (const m of mirrors) { const d = Math.hypot((m.x + 0.5) * TILE - pcx, (m.y + 0.5) * TILE - pcy); if (d < bd) { bd = d; best = m; } }
@@ -1542,7 +1552,7 @@ function render() {
   if (state === 'dying') f = clamp(stateT / 0.7, 0, 1);
   if (f > 0) { ctx.fillStyle = `rgba(1,3,8,${f})`; ctx.fillRect(0, 0, VW, VH); }
   if (state === 'dying' && stateT > 0.5) { ctx.fillStyle = `rgba(233,220,184,${clamp((stateT - 0.5) * 2, 0, 1)})`; ctx.font = `italic 24px ${FONT}`; ctx.textAlign = 'center'; ctx.fillText('The light gutters… and returns to the last beacon.', VW / 2, VH / 2); }
-  if (state === 'log') drawLog();
+  if (logOpen && state === 'play') drawLog();
   if (state === 'pause') drawPause();
   if (state === 'end' && stateT > 0) drawEnd();
 }
@@ -1618,6 +1628,7 @@ function drawPrompts() {
     ctx.fillStyle = '#f2c46d'; ctx.fillText(label, x, y + 1);
   };
   const lore = LORE.find(l => Math.abs((l.x + 0.5) * TILE - pcx) < 40 && Math.abs((l.gy - 0.5) * TILE - pcy) < 50);
+  if (lore && logOpen) return;
   if (lore) { prompt((lore.x + 0.5) * TILE, lore.gy * TILE - 48, 'E  Read'); return; }
   let best = null, bd = 2.7 * TILE;
   for (const m of mirrors) { const d = Math.hypot((m.x + 0.5) * TILE - pcx, (m.y + 0.5) * TILE - pcy); if (d < bd) { bd = d; best = m; } }
@@ -1678,11 +1689,26 @@ function wrapText(text, x, y, maxW, lh) {
   return y;
 }
 function drawLog() {
-  const l = logOpen, w = 640, x = (VW - w) / 2, y = 300, h = 210;
-  panel(x, y, w, h);
-  ctx.textAlign = 'left'; ctx.fillStyle = '#f2c46d'; ctx.font = `bold 18px ${FONT}`; ctx.fillText(l.title, x + 24, y + 34);
-  ctx.fillStyle = '#e3d8bd'; ctx.font = `15px ${FONT}`; wrapText(l.text, x + 24, y + 64, w - 48, 21);
-  ctx.fillStyle = 'rgba(233,220,184,.5)'; ctx.font = `italic 12px ${FONT}`; ctx.textAlign = 'right'; ctx.fillText('E / Jump to close', x + w - 16, y + h - 12);
+  // Slim, see-through strip along the bottom edge (usually rock and floor), sized to fit the text.
+  const l = logOpen, w = 760, x = (VW - w) / 2, pad = 16, lh = 18, maxW = w - pad * 2;
+  ctx.font = `14px ${FONT}`;
+  const lines = [];
+  for (const para of l.text.split('\n')) {
+    let line = '';
+    for (const word of para.split(' ')) { const t = line ? line + ' ' + word : word; if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = word; } else line = t; }
+    lines.push(line); lines.push(null);   // null = paragraph gap
+  }
+  lines.pop();
+  const bodyH = lines.reduce((h, ln) => h + (ln === null ? 6 : lh), 0), h = pad + 20 + bodyH + pad - 4, y = VH - h - 10;
+  ctx.fillStyle = 'rgba(5,11,22,.62)'; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(242,196,109,.35)'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.9)'; ctx.shadowBlur = 4;
+  ctx.textAlign = 'left'; ctx.fillStyle = '#f2c46d'; ctx.font = `bold 15px ${FONT}`; ctx.fillText(l.title, x + pad, y + pad + 10);
+  ctx.fillStyle = 'rgba(233,220,184,.55)'; ctx.font = `italic 11px ${FONT}`; ctx.textAlign = 'right'; ctx.fillText('E / Jump to close', x + w - pad, y + pad + 10);
+  ctx.textAlign = 'left'; ctx.fillStyle = '#e3d8bd'; ctx.font = `14px ${FONT}`;
+  let ty = y + pad + 32;
+  for (const ln of lines) { if (ln === null) { ty += 6; continue; } ctx.fillText(ln, x + pad, ty); ty += lh; }
+  ctx.restore();
 }
 const CONTROLS = [
   ['Move', '← →  /  A D'], ['Aim up / down', '↑ ↓  /  W S'], ['Jump (hold = higher)', 'Space / Z / K'],
@@ -1795,7 +1821,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Small hook for automated testing / debugging in the console.
-window.__lumen = { tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
+window.__lumen = { tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get logOpen() { return logOpen; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
 })();
 </script>
 </body>
