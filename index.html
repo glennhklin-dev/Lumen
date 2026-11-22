@@ -163,7 +163,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.11.0';
+const VERSION = '0.12.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -353,12 +353,16 @@ const LORE = [
   { x: 68, gy: 40, title: "Keeper's Log IV — Every Light Has a Name",
     text: "Each lighthouse has its own \"characteristic\": a pattern of flashes, such as two quick flashes every ten seconds, so sailors can tell which light they are seeing. By day, painted stripes and colours called daymarks do the same job." },
   { x: 92, gy: 40, title: "Keeper's Log V — Angles",
-    text: "The law of reflection: light leaves a mirror at the same angle it arrived. Set a mirror at 45 degrees and a beam turns a perfect corner.\nTurn the mirrors with [E]. Lead the beam to the crystal." },
+    text: "The law of reflection: light leaves a mirror at the same angle it arrived. Set a mirror at 45 degrees and a beam turns a perfect corner.\nThe keepers' mirrors still turn in their frames. Somewhere ahead, a crystal waits for the beam." },
   { x: 33, gy: 18, title: "Keeper's Log VI — Orders of Glass",
     text: "Lighthouse lenses were graded into \"orders\" by size. A first-order lens, used on major coastal lights, stood taller than a person and could weigh more than a tonne.\nThey say an oil flask was left high in these wrecks, past a path only light can find." },
-  { x: 135, gy: 56, title: "Keeper's Log VII — Bent Light",
-    text: "Light slows down when it passes from air into water or glass, and bends as it changes speed. This is refraction: it is why a stick in a pool looks broken, and how every lens works." },
-  { x: 178, gy: 8, title: "Keeper's Log VIII — The Last Keepers",
+  { x: 47, gy: 18, title: "Keeper's Log VII — Borrowed Armour",
+    text: "Crabs and their kin wear their skeletons on the outside, and must crack free of them to grow. The shell-backs of these wrecks carry theirs only in front, like a shield held up against the light.\nThe keepers learned never to meet them face to face." },
+  { x: 135, gy: 56, title: "Keeper's Log VIII — Bent Light",
+    text: "Light slows down when it passes from air into water or glass, and bends as it changes speed. This is refraction: it is why a stick in a pool looks broken, and how every lens works.\nThe keepers kept their burning-glasses in bowls of water. What a lantern scatters, a bowl gathers to a point, and darkglass yields to nothing less." },
+  { x: 183, gy: 56, title: "Keeper's Log IX — Newton's Prism",
+    text: "In 1666 Isaac Newton passed sunlight through a glass prism and watched it fan into a rainbow. A prism always bends light toward its thicker end, and each colour by a slightly different amount.\nSome light only reaches its mark the long way round." },
+  { x: 178, gy: 8, title: "Keeper's Log X — The Last Keepers",
     text: "Lamps once burned whale oil, then lard oil, then kerosene, before electricity took over. Today almost every lighthouse is automated, and the keepers are gone.\nThis one still needs you." },
 ];
 const MIRROR_DEF = [{ x: 100, y: 33, d: '/' }, { x: 100, y: 37, d: '/' }, { x: 108, y: 37, d: '\\' }];
@@ -725,12 +729,9 @@ function updateBeamRays(p) {
     }
   }
 }
-let seenGlass = false, seenTank = false, seenLens = false;
 function tickGlass(dt) {
   for (const t of tanks) {
     t.shimmer = approach(t.shimmer, t.lit ? 1 : 0, dt * 6);
-    if (t.lit && !seenTank) { seenTank = true; toast('The water bends your light.', 2.4); }
-    if (t.lit && t.kind === 'lens' && P.foci && P.foci.length && !seenLens) { seenLens = true; toast('The bowl gathers your light to a burning point.', 2.8); }
   }
   for (const sl of seals) {
     if (sl.broken) continue;
@@ -741,7 +742,8 @@ function tickGlass(dt) {
       if (Math.random() < dt * 30) burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 1, { color: '#e9e0ff', add: true, smin: 40, smax: 160, lmin: 0.15, lmax: 0.35 });
     } else {
       sl.crack = Math.max(0, sl.crack - dt * 0.6);
-      if (P.beamOn && (sl.glance || sl.hits) && !seenGlass) { seenGlass = true; toast('Darkglass. Diffuse light only glances off it.', 2.8); }
+      // Diffuse light skitters off darkglass: a visual tell, no words.
+      if (P.beamOn && sl.glance && Math.random() < dt * 14) { const [tx, ty] = sl.tiles[Math.floor(Math.random() * sl.tiles.length)]; burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 1, { color: '#a99ad8', add: true, smin: 20, smax: 70, lmin: 0.1, lmax: 0.2 }); }
     }
     if (sl.crack >= 1) {
       sl.broken = true; freeze = Math.max(freeze, 0.12); addShake(9);
@@ -750,7 +752,6 @@ function tickGlass(dt) {
         burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 16, { color: '#2a2140', smin: 60, smax: 260, lmin: 0.4, lmax: 0.9, zmin: 2, zmax: 5, g: 500 });
         burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 10, { color: '#d9ccff', add: true, smin: 80, smax: 300, lmin: 0.2, lmax: 0.5 });
       }
-      toast('The darkglass shatters.', 2);
       for (const u of upgs) if (!u.free && sl.tiles.some(([x, y]) => x === u.x && y === u.gy)) { u.free = true; u.vy = 0; }
     }
   }
@@ -821,7 +822,6 @@ function respawnAtCheckpoint() {
   resetEnemies(); snapCam(); clearPressed();
   state = 'play'; fade = 1;
 }
-let seenShell = false;
 function burnEnemy(e, p, dt, hit) {
   const ang = hit.ang, dx = Math.cos(ang), dy = Math.sin(ang), lim = T.beamKnock;
   // Shellback: light striking its face glances off the shell. Burn it from behind or from above —
@@ -829,7 +829,6 @@ function burnEnemy(e, p, dt, hit) {
   if (e.type === 'shell' && !hit.focus && dy < 0.75 && Math.sign(dx) === -e.dir) {
     e.vx = clamp(e.vx + dx * 80 * dt, -40, 40);
     if (Math.random() < dt * 30) burst(e.x + e.w / 2 + e.dir * 14, e.y + e.h / 2, 1, { color: '#e8f4ff', ang: Math.PI - ang, spread: 0.7, smin: 80, smax: 220, lmin: 0.12, lmax: 0.25, add: true });
-    if (!seenShell) { seenShell = true; toast('Its shell turns the light aside. Burn it from behind or above.', 3); }
     return;
   }
   if (e.type === 'drip' && (e.state === 'hang' || e.state === 'tremble')) { e.state = 'fall'; e.vy = 60; }
@@ -1970,7 +1969,7 @@ function drawHeart(c, x, y, k) {
 function drawTanks() {
   for (const t of tanks) {
     const px = t.x * TILE, py = t.y * TILE, w = t.w * TILE, h = t.h * TILE, k = t.shimmer;
-    if (!isSolid(t.x, t.y - 1)) {              // hanging tank: chains up to the ceiling
+    if (!isSolid(t.x, t.y + t.h) && !isSolid(t.x, t.y - 1)) {   // hanging tank: chains up to the ceiling
       let top = t.y - 1; while (top > 0 && !isSolid(t.x, top)) top--;
       ctx.strokeStyle = '#2c3a44'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
       ctx.beginPath(); ctx.moveTo(px + 6, py); ctx.lineTo(px + 6, (top + 1) * TILE); ctx.moveTo(px + w - 6, py); ctx.lineTo(px + w - 6, (top + 1) * TILE); ctx.stroke();
