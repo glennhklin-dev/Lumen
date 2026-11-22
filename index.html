@@ -163,7 +163,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.14.2';
+const VERSION = '0.15.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -998,9 +998,13 @@ function tickPlayer(dt) {
   // Beam resolution: burn and push everything in the cone
   if (p.beamOn) {
     updateBeamRays(p); smoothBeamSpot(p, dt);
-    if (Math.random() < dt * 40) {
-      const r = p.rays[Math.floor(Math.random() * RAYS)], d = Math.random() * r.len;
-      particles.push({ x: p.beamO.x + Math.cos(r.a) * d, y: p.beamO.y + Math.sin(r.a) * d, vx: rnd(-8, 8), vy: rnd(-12, 4), life: 0.7, max: 0.7, size: rnd(0.6, 1.3), color: '#fff0c8', g: 0, add: true, drag: 0 });
+    for (let n = 0; n < 2; n++) if (Math.random() < dt * 45) {
+      const r = p.rays[Math.floor(Math.random() * RAYS)], d = Math.sqrt(Math.random()) * r.len;
+      particles.push({ x: p.beamO.x + Math.cos(r.a) * d, y: p.beamO.y + Math.sin(r.a) * d, vx: rnd(-8, 8), vy: rnd(-10, 6), life: rnd(0.6, 1.1), max: 1.1, size: rnd(0.6, 1.5), color: '#fff0c8', g: 0, add: true, drag: 0, mote: true, tw: rnd(0, 6) });
+    }
+    for (const g of p.subs || []) if (Math.random() < dt * 30) {
+      const q = g.segs[Math.floor(Math.random() * g.segs.length)], k = Math.random();
+      particles.push({ x: q.x0 + (q.x1 - q.x0) * k, y: q.y0 + (q.y1 - q.y0) * k, vx: rnd(-8, 8), vy: rnd(-10, 6), life: rnd(0.6, 1.1), max: 1.1, size: rnd(0.6, 1.4), color: '#fff0c8', g: 0, add: true, drag: 0, mote: true, tw: rnd(0, 6) });
     }
     for (const e of enemies) {
       const hit = e.dead ? false : inPlayerBeam(e.x + e.w / 2, e.y + e.h / 2, 12);
@@ -1319,6 +1323,8 @@ function tickEmbers(dt) {
 }
 function tickParticles(dt) {
   for (const q of particles) { q.life -= dt; q.vx -= q.vx * q.drag * dt; q.vy -= q.vy * q.drag * dt; q.vy += q.g * dt; q.x += q.vx * dt; q.y += q.vy * dt; }
+  // Motes only glitter while the beam is on them; sweep away and they fade out of sight.
+  for (const q of particles) if (q.mote && !inPlayerBeam(q.x, q.y, 0)) q.life = Math.min(q.life, 0.12);
   particles = particles.filter(q => q.life > 0);
   if (particles.length > 600) particles.splice(0, particles.length - 600);
 }
@@ -1745,7 +1751,7 @@ function render() {
   }
   // Lantern beam
   if (P.beamOn && P.rays && state !== 'dying') drawBeam();
-  for (const q of particles) if (q.add) { ctx.globalAlpha = clamp(q.life / q.max, 0, 1); ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, 7); ctx.fill(); }
+  for (const q of particles) if (q.add) { ctx.globalAlpha = clamp(q.life / q.max, 0, 1) * (q.mote ? 0.55 + 0.45 * Math.sin(time * 9 + q.tw) : 1); ctx.fillStyle = q.color; ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, 7); ctx.fill(); }
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
   for (const e of enemies) if (!e.dead) drawEnemyEyes(e);
@@ -1833,14 +1839,8 @@ function drawBeam() {
   tintMask('rgb(255,214,150)'); ctx.drawImage(tintCv, 0, 0);
   ctx.restore();
   // 3) Where it lands: a soft lantern-like glow (the darkness there is lifted in collectLights).
-  for (const sp of beamSpots(p)) glow(sp.x, sp.y, sp.r * 0.45, `rgba(255,190,90,${0.08 * fl})`);
-  // 4) A faint rim on exactly what the beam burns, so its reach reads at a glance.
-  ctx.save(); ctx.lineJoin = 'round'; ctx.lineWidth = 1.2; ctx.strokeStyle = `rgba(255,232,170,${0.3 * fl})`;
-  ctx.beginPath(); ctx.moveTo(o.x, o.y);
-  for (const r of p.rays) ctx.lineTo(o.x + Math.cos(r.a) * r.len, o.y + Math.sin(r.a) * r.len);
-  ctx.closePath(); ctx.stroke();
-  for (const g of p.subs || []) { ctx.beginPath(); g.poly.forEach((pt, i) => i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y)); ctx.closePath(); ctx.stroke(); }
-  ctx.restore();
+  // Spill: cool and soft, lighting surfaces only. The warm, dusty shaft above is the part that burns.
+  for (const sp of beamSpots(p)) glow(sp.x, sp.y, sp.r * 0.5, `rgba(170,200,235,${0.06 * fl})`);
   glow(o.x, o.y, 20, `rgba(255,240,200,${0.45 * fl})`);
   for (const fc of p.foci || []) {
     const k = clamp(fc.n / 10, 0.3, 1);
