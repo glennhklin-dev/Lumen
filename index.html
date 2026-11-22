@@ -153,7 +153,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.9.1';
+const VERSION = '0.9.2';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -977,11 +977,14 @@ function tick(dt) {
     h.a = approach(h.a, h.lit ? 1 : 0, dt * 7);
   }
 
-  tickPlayer(dt);
+  // Reading a Keeper's Log holds you and the Murk still; the world itself keeps breathing.
+  if (logOpen) {
+    P.beamOn = false; P.vx = 0;
+    if (take('interact') || take('jump') || take('flash') || take('start')) { logOpen = null; clearPressed(); }
+  } else tickPlayer(dt);
   if (state !== 'play') return;
   traceBeam();
   // While a Keeper's Log is open the world keeps moving, but the Murk holds still.
-  if (logOpen && Math.hypot((logOpen.x + 0.5) * TILE - pcx, (logOpen.gy - 0.5) * TILE - pcy) > 90) logOpen = null;
   if (!logOpen) {
     tickEnemies(dt);
     if (state !== 'play') return;
@@ -1029,8 +1032,7 @@ function tick(dt) {
   // Interact: read lore stones or turn mirrors
   if (take('interact')) {
     const lore = LORE.find(l => Math.abs((l.x + 0.5) * TILE - pcx) < 40 && Math.abs((l.gy - 0.5) * TILE - pcy) < 50);
-    if (logOpen) logOpen = null;
-    else if (lore) logOpen = lore;
+    if (lore) { logOpen = lore; clearPressed(); }
     else {
       let best = null, bd = 2.7 * TILE;
       for (const m of mirrors) { const d = Math.hypot((m.x + 0.5) * TILE - pcx, (m.y + 0.5) * TILE - pcy); if (d < bd) { bd = d; best = m; } }
@@ -1691,7 +1693,7 @@ function drawLog() {
   panel(x, y, w, h);
   ctx.textAlign = 'left'; ctx.fillStyle = '#f2c46d'; ctx.font = `bold 18px ${FONT}`; ctx.fillText(l.title, x + 24, y + 34);
   ctx.fillStyle = '#e3d8bd'; ctx.font = `15px ${FONT}`; wrapText(l.text, x + 24, y + 64, w - 48, 21);
-  ctx.fillStyle = 'rgba(233,220,184,.5)'; ctx.font = `italic 12px ${FONT}`; ctx.textAlign = 'right'; ctx.fillText('E to close · or walk away', x + w - 16, y + h - 12);
+  ctx.fillStyle = 'rgba(233,220,184,.5)'; ctx.font = `italic 12px ${FONT}`; ctx.textAlign = 'right'; ctx.fillText('E / Jump to close', x + w - 16, y + h - 12);
 }
 const CONTROLS = [
   ['Move', '← →  /  A D'], ['Aim up / down', '↑ ↓  /  W S'], ['Jump (hold = higher)', 'Space / Z / K'],
@@ -1804,7 +1806,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Small hook for automated testing / debugging in the console.
-window.__lumen = { tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
+window.__lumen = { tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get logOpen() { return logOpen; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
 })();
 </script>
 </body>
