@@ -163,7 +163,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.14.0';
+const VERSION = '0.14.1';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -1171,9 +1171,11 @@ function tick(dt) {
   fade = Math.max(0, fade - dt * 2);
 
   // Lantern reveals hidden walkways
-  const lr = lanternR() * 0.92, pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
+  const lr = lanternR() * 0.92, pcx = P.x + P.w / 2, pcy = P.y + P.h / 2, spots = beamSpots(P);
   for (const h of hidden) {
-    h.lit = P.hazard <= 0 && (Math.hypot((h.x + 0.5) * TILE - pcx, (h.y + 0.5) * TILE - pcy) < lr || inPlayerBeam((h.x + 0.5) * TILE, (h.y + 0.5) * TILE, 10));
+    const hx = (h.x + 0.5) * TILE, hy = (h.y + 0.5) * TILE;
+    h.lit = P.hazard <= 0 && (Math.hypot(hx - pcx, hy - pcy) < lr || inPlayerBeam(hx, hy, 10)
+      || spots.some(sp => Math.hypot(hx - sp.x, hy - sp.y) < sp.r * 0.65));     // anywhere the beam's glow reaches
     h.a = approach(h.a, h.lit ? 1 : 0, dt * 7);
   }
 
@@ -2155,7 +2157,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Small hook for automated testing / debugging in the console.
-window.__lumen = { tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get logOpen() { return logOpen; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
+window.__lumen = { tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get logOpen() { return logOpen; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, hidden: () => hidden, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
 })();
 </script>
 </body>
