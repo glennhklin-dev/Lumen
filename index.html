@@ -113,6 +113,13 @@ const TDEF = [
   {k:'poolBurnTime', v:2.5,  min:0.3, max:8,    s:0.1,  l:'Beam time to destroy a pool (s)'},
   {k:'poolRegen',    v:0.5,  min:0,   max:3,    s:0.05, l:'Pool recovery when unlit (×)'},
   {k:'poolEmbers',   v:3,    min:0,   max:8,    s:1,    l:'Embers dropped by a pool'},
+  {g:'Water glass (refraction)'},
+  {k:'prismBend',    v:45,   min:5,   max:90,   s:1,    l:'Prism tank bend (deg)'},
+  {k:'relayRange',   v:1.5,  min:0.5, max:3,    s:0.05, l:'Range after a tank (× beam range)'},
+  {k:'focusRadius',  v:26,   min:6,   max:80,   s:1,    l:'Focus point radius (px)'},
+  {k:'focusMult',    v:3,    min:1,   max:8,    s:0.25, l:'Damage at the focus (×)'},
+  {k:'focusRays',    v:6,    min:1,   max:21,   s:1,    l:'Rays needed to crack darkglass'},
+  {k:'glassCrackTime',v:1.2, min:0.2, max:5,    s:0.1,  l:'Focused time to shatter darkglass (s)'},
   {g:'Darkness spawning (like night in Minecraft)'},
   {k:'darkCap',      v:2,    min:0,   max:10,   s:1,    l:'Max alive from darkness'},
   {k:'darkInterval', v:14,   min:0.5, max:30,   s:0.5,  l:'Seconds between dark spawns'},
@@ -148,7 +155,7 @@ const TDEF = [
 ];
 const T = {};
 for (const d of TDEF) if (d.k) T[d.k] = d.v;
-const TKEY = 'lumen.tuning.v5';
+const TKEY = 'lumen.tuning.v6';
 try { const s = JSON.parse(localStorage.getItem(TKEY) || '{}'); for (const k in s) if (k in T) T[k] = +s[k]; } catch (e) {}
 const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } catch (e) {} };
 
@@ -156,7 +163,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.10.0';
+const VERSION = '0.11.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -289,6 +296,11 @@ function buildLevel() {
   R(100, 46, 190, 55, '.');
   R(140, 46, 142, 47, '#'); R(160, 46, 163, 46, '#');
   R(150, 56, 159, 56, '.'); R(150, 57, 159, 58, '~'); R(152, 54, 153, 54, '#'); R(156, 54, 157, 54, '#');
+  // ---- Refraction puzzles (water tanks 'w', darkglass 'G') ----
+  R(93, 52, 98, 55, '.'); R(99, 52, 99, 55, 'G');                                  // west alcove behind darkglass (lens)
+  R(170, 56, 177, 56, '.'); R(170, 57, 177, 58, '~');                               // flooded pit under the hanging lens
+  R(171, 42, 175, 44, '.'); R(172, 45, 174, 45, 'G');                               // sealed niche in the ceiling
+  for (const t of TANK_DEF) R(t.x, t.y, t.x + t.w - 1, t.y + t.h - 1, 'w');
   // ---- Lamp Tower (x184-197, rows 4-55) ----
   R(184, 4, 197, 55, '.');
   const cols = { L: [185, 188], M: [189, 192], R: [193, 196] }, pat = ['M', 'R', 'M', 'L'];
@@ -302,7 +314,29 @@ function buildLevel() {
   }
 }
 const tileAt = (x, y) => (x < 0 || x >= W || y < 0 || y >= H) ? '#' : grid[y][x];
-const isSolid = (x, y) => { const c = tileAt(x, y); return c === '#' || c === 'D'; };
+const isSolid = (x, y) => { const c = tileAt(x, y); return c === '#' || c === 'D' || c === 'G' || c === 'w'; };
+const blocksLight = (x, y) => { const c = tileAt(x, y); return c === '#' || c === 'D' || c === 'G'; };
+/* Water glass: tanks bend the lantern's light. A prism tank turns it toward its base; a lens bowl
+   gathers it to a focal point. Darkglass ('G') shrugs off diffuse light but shatters under a focus. */
+const TANK_DEF = [
+  { x: 103, y: 54, w: 2, h: 2, kind: 'lens', f: 115, axis: [1, 0] },
+  { x: 172, y: 47, w: 3, h: 2, kind: 'lens', f: 90, axis: [0, 1] },
+  { x: 180, y: 54, w: 1, h: 2, kind: 'prism', base: [0, -1] },
+];
+let tanks = [], seals = [];
+function tankAt(tx, ty) { for (const t of tanks) if (tx >= t.x && tx < t.x + t.w && ty >= t.y && ty < t.y + t.h) return t; return null; }
+function sealAt(tx, ty) { for (const sl of seals) if (!sl.broken && sl.tiles.some(([x, y]) => x === tx && y === ty)) return sl; return null; }
+function buildGlass() {
+  tanks = TANK_DEF.map(d => ({ ...d, lit: 0, F: null, inDir: [0, 0], shimmer: 0 }));
+  seals = []; const seen = new Set();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (grid[y][x] !== 'G' || seen.has(x + ',' + y)) continue;
+    const sl = { tiles: [], crack: 0, broken: false, hits: 0, glance: 0 }, q = [[x, y]]; seen.add(x + ',' + y);
+    while (q.length) { const [cx, cy] = q.pop(); sl.tiles.push([cx, cy]);
+      for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) if (tileAt(nx, ny) === 'G' && !seen.has(nx + ',' + ny)) { seen.add(nx + ',' + ny); q.push([nx, ny]); } }
+    seals.push(sl);
+  }
+}
 let hidden = []; // {x,y,a,lit}
 const hiddenLit = (x, y) => { for (const h of hidden) if (h.x === x && h.y === y) return h.lit; return false; };
 const isPlatform = (x, y) => tileAt(x, y) === '=' && hiddenLit(x, y);
@@ -335,14 +369,19 @@ const ENEMY_DEF = [
   { t: 'murk', x: 25, y: 40 }, { t: 'murk', x: 61, y: 40 }, { t: 'murk', x: 66, y: 40 }, { t: 'murk', x: 104, y: 40 }, { t: 'murk', x: 113, y: 40 },
   { t: 'drip', x: 69, y: 26 },
   { t: 'murk', x: 66, y: 18 }, { t: 'shell', x: 52, y: 18 }, { t: 'wing', x: 42, y: 9 }, { t: 'wing', x: 75, y: 7 },
-  { t: 'murk', x: 146, y: 56 }, { t: 'murk', x: 168, y: 56 }, { t: 'shell', x: 115, y: 56 }, { t: 'shell', x: 180, y: 56 },
-  { t: 'wing', x: 120, y: 49 }, { t: 'wing', x: 166, y: 50 }, { t: 'drip', x: 145, y: 46 }, { t: 'drip', x: 171, y: 46 },
+  { t: 'murk', x: 146, y: 56 }, { t: 'murk', x: 168, y: 56 }, { t: 'shell', x: 115, y: 56 }, { t: 'shell', x: 162, y: 56 },
+  { t: 'wing', x: 120, y: 49 }, { t: 'wing', x: 166, y: 50 }, { t: 'drip', x: 145, y: 46 }, { t: 'drip', x: 166, y: 46 },
   { t: 'wing', x: 191, y: 25 }, { t: 'wing', x: 189, y: 13 },
 ];
 const LAMP_DEF = [{ x: 13, gy: 40 }, { x: 59, gy: 40 }, { x: 110, gy: 40 }, { x: 45, gy: 18 }, { x: 165, gy: 56 }, { x: 186, gy: 32 }];
 const lampFY = l => l.gy * TILE - 46, lampZY = l => l.gy * TILE - 18;
-const UPG_DEF = [{ x: 86, gy: 9, kind: 'fuel', amt: 25, name: 'Oil Flask' }];
-let upgrades = { got: new Set(), fuel: 0 };
+const UPG_DEF = [
+  { x: 86, gy: 9, kind: 'fuel', amt: 25, name: 'Oil Flask' },
+  { x: 95, gy: 56, kind: 'fuel', amt: 25, name: 'Deep Oil Flask' },
+  { x: 173, gy: 45, kind: 'mask', amt: 1, name: 'Glass Heart', sealed: true },   // rests on the ceiling seal; drifts down when freed
+];
+let upgs = [];
+let upgrades = { got: new Set(), fuel: 0, masks: 0 };
 
 /* =====================================================================
    World state
@@ -357,7 +396,7 @@ const cam = { x: 0, y: 0, look: 0 };
 function newPlayer() {
   return { x: SPAWN.x, y: SPAWN.y, w: 18, h: 28, vx: 0, vy: 0, facing: 1, grounded: false, coyote: 0, jumpBuf: 0, jumping: false,
     fuel: T.fuelMax + upgrades.fuel, maxFuel: T.fuelMax + upgrades.fuel, beamOn: false, beamAng: 0, beamAge: 0, prevTouchAim: null, burnout: false, regenT: 0, rays: null, beamO: null, pogoCD: 0,
-    masks: 5, maxMasks: 5, embers: 0, inv: 0, hurtLock: 0, hazard: 0, sx: 1, sy: 1,
+    masks: 5 + upgrades.masks, maxMasks: 5 + upgrades.masks, embers: 0, inv: 0, hurtLock: 0, hazard: 0, sx: 1, sy: 1,
     dropT: 0, dust: 0, anim: 0, lastSafe: { x: SPAWN.x, y: SPAWN.y }, maskLost: 0 };
 }
 const ETYPES = { murk: { w: 24, h: 20, hp: 1.6 }, wing: { w: 22, h: 14, hp: 1.0 }, shell: { w: 30, h: 22, hp: 3.2 }, drip: { w: 18, h: 16, hp: 0.9 } };
@@ -378,7 +417,7 @@ function resetEnemies() {
 
 /* Murk pools: dark spots that breed Murklings, limited by a global mob cap and a per-pool cap.
    Burning a pool with the beam destroys it and frees the embers inside; its spawn drop none. */
-const POOL_DEF = [{ x: 24, gy: 40 }, { x: 64, gy: 40 }, { x: 106, gy: 40 }, { x: 68, gy: 18 }, { x: 108, gy: 56 }, { x: 176, gy: 56 }];
+const POOL_DEF = [{ x: 24, gy: 40 }, { x: 64, gy: 40 }, { x: 106, gy: 40 }, { x: 68, gy: 18 }, { x: 116, gy: 56 }, { x: 145, gy: 56 }];
 let pools = [], seenPool = false;
 let seeps = [];   // pending spawns rising out of dark ground
 /* Far-away spawned Murklings fade out so the mob cap goes to ones that can actually reach you.
@@ -544,11 +583,12 @@ function newGame() {
   buildLevel();
   hidden = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (grid[y][x] === '=') hidden.push({ x, y, a: 0, lit: false });
-  upgrades = { got: new Set(), fuel: 0 };
+  upgrades = { got: new Set(), fuel: 0, masks: 0 };
   P = newPlayer(); logOpen = null;
+  buildGlass(); upgs = UPG_DEF.map((u, i) => ({ ...u, i, px: (u.x + 0.5) * TILE, py: u.gy * TILE - 14, free: !u.sealed, vy: 0 }));
   resetEnemies(); resetLamps(); embers = [];
   beacons = BEACON_DEF.map(d => ({ x: d.x, gy: d.gy, lit: false, final: !!d.final, glow: 0, near: false }));
-  upgrades = { got: new Set(), fuel: 0 };
+  upgrades = { got: new Set(), fuel: 0, masks: 0 };
   mirrors = MIRROR_DEF.map(m => ({ ...m, ang: m.d === '/' ? -Math.PI / 4 : Math.PI / 4 }));
   particles = []; toasts = [];
   crystal = { charge: 0 }; door = { open: false, t: 0, opening: false };
@@ -623,20 +663,124 @@ function castRay(ox, oy, a, max) {
   for (let d = 0; d < max; d += 4) if (isSolid(Math.floor((ox + dx * d) / TILE), Math.floor((oy + dy * d) / TILE))) return d;
   return max;
 }
+// Rays march out from the lantern. Entering a water tank, a ray crosses it and is bent on the way
+// out (prism: turned toward the base; lens: aimed at a shared focal point), then carries on with
+// renewed reach. Each ray keeps its path as segments; segs[0] is the plain cone.
 function updateBeamRays(p) {
   const o = beamOrigin(p), half = T.beamHalfAngle * Math.PI / 180;
-  p.beamO = o; p.rays = [];
-  for (let i = 0; i < RAYS; i++) { const a = p.beamAng - half + (2 * half * i) / (RAYS - 1); p.rays.push({ a, len: castRay(o.x, o.y, a, T.beamRange) }); }
+  p.beamO = o; p.rays = []; p.subs = []; p.foci = [];
+  for (const t of tanks) { t.lit = 0; t.F = null; t.inDir = [0, 0]; }
+  for (const sl of seals) { sl.hits = 0; sl.glance = 0; }
+  let active = [];
+  for (let i = 0; i < RAYS; i++) {
+    const a = p.beamAng - half + (2 * half * i) / (RAYS - 1), r = { a, len: 0, segs: [] };
+    p.rays.push(r); active.push({ r, i, x: o.x, y: o.y, a, left: T.beamRange, used: [], via: null });
+  }
+  for (let stage = 0; stage < 4 && active.length; stage++) {
+    const next = [];
+    for (const s of active) {
+      const dx = Math.cos(s.a), dy = Math.sin(s.a); let d = 0, tk = null;
+      for (; d < s.left; d += 3) {
+        const tx = Math.floor((s.x + dx * d) / TILE), ty = Math.floor((s.y + dy * d) / TILE), t = tankAt(tx, ty);
+        if (t) { if (!s.used.includes(t)) { tk = t; break; } continue; }
+        if (blocksLight(tx, ty)) {
+          const sl = sealAt(tx, ty);
+          if (sl) { if (s.via && s.via.kind === 'lens') sl.hits++; else sl.glance++; }
+          break;
+        }
+      }
+      d = Math.min(d, s.left);
+      const seg = { x0: s.x, y0: s.y, x1: s.x + dx * d, y1: s.y + dy * d, a: s.a, via: s.via, i: s.i };
+      s.r.segs.push(seg); if (stage === 0) s.r.len = d;
+      if (s.via) { let g = p.subs.find(q => q.via === s.via && q.stage === stage); if (!g) p.subs.push(g = { via: s.via, stage, segs: [] }); g.segs.push(seg); }
+      if (!tk) continue;
+      let ex = seg.x1, ey = seg.y1;
+      for (let k = 0; k < 200 && tankAt(Math.floor(ex / TILE), Math.floor(ey / TILE)) === tk; k++) { ex += dx * 2; ey += dy * 2; }
+      s.r.segs.push({ x0: seg.x1, y0: seg.y1, x1: ex, y1: ey, a: s.a, inside: tk, i: s.i });
+      tk.lit++; tk.inDir[0] += dx; tk.inDir[1] += dy;
+      s.tk = tk; s.ex = ex; s.ey = ey; next.push(s);
+    }
+    for (const s of next) {
+      const tk = s.tk; let a = s.a;
+      if (tk.kind === 'prism') {
+        const diff = angDiff(Math.atan2(tk.base[1], tk.base[0]), a), dl = T.prismBend * Math.PI / 180;
+        a += Math.sign(diff) * Math.min(Math.abs(diff), dl);
+      } else {
+        if (!tk.F) {                            // the bowl gathers light to a point on its axis, on the far side
+          const sg = Math.sign(tk.inDir[0] * tk.axis[0] + tk.inDir[1] * tk.axis[1]) || 1, cx = (tk.x + tk.w / 2) * TILE, cy = (tk.y + tk.h / 2) * TILE;
+          tk.F = { x: cx + tk.axis[0] * sg * tk.f, y: cy + tk.axis[1] * sg * tk.f };
+        }
+        a = Math.atan2(tk.F.y - s.ey, tk.F.x - s.ex);
+      }
+      s.used = [...s.used, tk]; s.x = s.ex; s.y = s.ey; s.a = a; s.left = T.beamRange * T.relayRange; s.via = tk;
+    }
+    active = next;
+  }
+  for (const g of p.subs) {
+    g.segs.sort((u, v) => u.i - v.i);
+    g.poly = [...g.segs.map(q => ({ x: q.x0, y: q.y0 })), ...g.segs.slice().reverse().map(q => ({ x: q.x1, y: q.y1 }))];
+    if (g.via.kind === 'lens' && g.via.F) {
+      const F = g.via.F, n = g.segs.filter(q => segDist(F.x, F.y, { x: q.x0, y: q.y0 }, { x: q.x1, y: q.y1 }) < 10).length;
+      if (n >= 3) p.foci.push({ x: F.x, y: F.y, n });
+    }
+  }
 }
-// Is a point inside the player's (wall-occluded) light cone? pad grows the test for body size.
+let seenGlass = false, seenTank = false, seenLens = false;
+function tickGlass(dt) {
+  for (const t of tanks) {
+    t.shimmer = approach(t.shimmer, t.lit ? 1 : 0, dt * 6);
+    if (t.lit && !seenTank) { seenTank = true; toast('The water bends your light.', 2.4); }
+    if (t.lit && t.kind === 'lens' && P.foci && P.foci.length && !seenLens) { seenLens = true; toast('The bowl gathers your light to a burning point.', 2.8); }
+  }
+  for (const sl of seals) {
+    if (sl.broken) continue;
+    const focused = P.beamOn && sl.hits >= T.focusRays;
+    if (focused) {
+      sl.crack += dt / T.glassCrackTime; addShake(1.2 + 2 * sl.crack);
+      const [tx, ty] = sl.tiles[Math.floor(Math.random() * sl.tiles.length)];
+      if (Math.random() < dt * 30) burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 1, { color: '#e9e0ff', add: true, smin: 40, smax: 160, lmin: 0.15, lmax: 0.35 });
+    } else {
+      sl.crack = Math.max(0, sl.crack - dt * 0.6);
+      if (P.beamOn && (sl.glance || sl.hits) && !seenGlass) { seenGlass = true; toast('Darkglass. Diffuse light only glances off it.', 2.8); }
+    }
+    if (sl.crack >= 1) {
+      sl.broken = true; freeze = Math.max(freeze, 0.12); addShake(9);
+      for (const [tx, ty] of sl.tiles) {
+        grid[ty][tx] = '.';
+        burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 16, { color: '#2a2140', smin: 60, smax: 260, lmin: 0.4, lmax: 0.9, zmin: 2, zmax: 5, g: 500 });
+        burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 10, { color: '#d9ccff', add: true, smin: 80, smax: 300, lmin: 0.2, lmax: 0.5 });
+      }
+      toast('The darkglass shatters.', 2);
+      for (const u of upgs) if (!u.free && sl.tiles.some(([x, y]) => x === u.x && y === u.gy)) { u.free = true; u.vy = 0; }
+    }
+  }
+}
+function pointInPoly(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > y) !== (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+const inFocus = (x, y, pad = 0) => P && P.foci && P.foci.some(f => Math.hypot(x - f.x, y - f.y) < T.focusRadius + pad);
 function inPlayerBeam(x, y, pad = 0) {
   const p = P; if (!p || !p.beamOn || !p.rays) return false;
   const o = p.beamO, dx = x - o.x, dy = y - o.y, d = Math.hypot(dx, dy);
-  if (d > T.beamRange + pad) return false;
-  const half = T.beamHalfAngle * Math.PI / 180, diff = angDiff(Math.atan2(dy, dx), p.beamAng);
-  if (Math.abs(diff) > half + (d > 1 ? Math.atan(pad / d) : Math.PI)) return false;
-  const k = clamp(Math.round((clamp(diff, -half, half) + half) / (2 * half) * (RAYS - 1)), 0, RAYS - 1);
-  return d <= p.rays[k].len + pad;
+  if (d <= T.beamRange + pad) {
+    const half = T.beamHalfAngle * Math.PI / 180, diff = angDiff(Math.atan2(dy, dx), p.beamAng);
+    if (Math.abs(diff) <= half + (d > 1 ? Math.atan(pad / d) : Math.PI)) {
+      const k = clamp(Math.round((clamp(diff, -half, half) + half) / (2 * half) * (RAYS - 1)), 0, RAYS - 1);
+      if (d <= p.rays[k].len + pad) return { ang: p.beamAng, focus: false };
+    }
+  }
+  // Light bent by a tank
+  for (const g of p.subs || []) {
+    let best = null, bd = pad + 4;
+    for (const q of g.segs) { const sd = segDist(x, y, { x: q.x0, y: q.y0 }, { x: q.x1, y: q.y1 }); if (sd < bd) { bd = sd; best = q; } }
+    if (best || pointInPoly(x, y, g.poly)) return { ang: (best || g.segs[g.segs.length >> 1]).a, focus: inFocus(x, y, pad) };
+  }
+  return false;
 }
 function aimTarget(p, ix, U, D) { if (touchAim !== null) return touchAim; let ax = ix; const ay = (D ? 1 : 0) - (U ? 1 : 0); if (!ax && !ay) ax = p.facing; return Math.atan2(ay, ax); }
 function sweepToward(p, target, dt) {
@@ -678,17 +822,18 @@ function respawnAtCheckpoint() {
   state = 'play'; fade = 1;
 }
 let seenShell = false;
-function burnEnemy(e, p, dt) {
-  const dx = Math.cos(p.beamAng), dy = Math.sin(p.beamAng), lim = T.beamKnock;
-  // Shellback: light striking its face glances off the shell. Burn it from behind or from above.
-  if (e.type === 'shell' && dy < 0.75 && Math.sign(dx) === -e.dir) {
+function burnEnemy(e, p, dt, hit) {
+  const ang = hit.ang, dx = Math.cos(ang), dy = Math.sin(ang), lim = T.beamKnock;
+  // Shellback: light striking its face glances off the shell. Burn it from behind or from above —
+  // or pierce it with a focused point of light.
+  if (e.type === 'shell' && !hit.focus && dy < 0.75 && Math.sign(dx) === -e.dir) {
     e.vx = clamp(e.vx + dx * 80 * dt, -40, 40);
-    if (Math.random() < dt * 30) burst(e.x + e.w / 2 + e.dir * 14, e.y + e.h / 2, 1, { color: '#e8f4ff', ang: Math.PI - p.beamAng, spread: 0.7, smin: 80, smax: 220, lmin: 0.12, lmax: 0.25, add: true });
+    if (Math.random() < dt * 30) burst(e.x + e.w / 2 + e.dir * 14, e.y + e.h / 2, 1, { color: '#e8f4ff', ang: Math.PI - ang, spread: 0.7, smin: 80, smax: 220, lmin: 0.12, lmax: 0.25, add: true });
     if (!seenShell) { seenShell = true; toast('Its shell turns the light aside. Burn it from behind or above.', 3); }
     return;
   }
   if (e.type === 'drip' && (e.state === 'hang' || e.state === 'tremble')) { e.state = 'fall'; e.vy = 60; }
-  e.hp -= T.beamDps * dt; e.flash = 0.05; e.wind = 0; e.stun = Math.max(e.stun, 0.15);
+  e.hp -= T.beamDps * (hit.focus ? T.focusMult : 1) * dt; e.flash = 0.05; e.wind = 0; e.stun = Math.max(e.stun, 0.15);
   if (e.type === 'wing') {                              // flyers are blown about freely
     e.vx = clamp(e.vx + dx * lim * 10 * dt, -lim * 1.3, lim * 1.3); e.vy = clamp(e.vy + dy * lim * 10 * dt, -lim * 1.3, lim * 1.3);
   } else {
@@ -698,7 +843,7 @@ function burnEnemy(e, p, dt) {
   }
   addShake(T.shakeHit * 0.5);
   const ex = e.x + e.w / 2, ey = e.y + e.h / 2;
-  if (Math.random() < dt * 30) burst(ex, ey, 1, { color: '#ffe3a1', ang: p.beamAng, spread: 0.8, smin: 60, smax: 200, lmin: 0.15, lmax: 0.3, add: true });
+  if (Math.random() < dt * 30) burst(ex, ey, 1, { color: hit.focus ? '#ffffff' : '#ffe3a1', ang, spread: 0.8, smin: 60, smax: 200, lmin: 0.15, lmax: 0.3, add: true });
   if (Math.random() < dt * 20) burst(ex, ey, 1, { color: '#1b1533', g: -80, smin: 10, smax: 60, lmin: 0.3, lmax: 0.6, zmin: 2, zmax: 4 });
   if (e.hp <= 0) {
     e.dead = true; stats.kills++;
@@ -838,8 +983,9 @@ function tickPlayer(dt) {
       particles.push({ x: p.beamO.x + Math.cos(r.a) * d, y: p.beamO.y + Math.sin(r.a) * d, vx: rnd(-8, 8), vy: rnd(-12, 4), life: 0.7, max: 0.7, size: rnd(0.6, 1.3), color: '#fff0c8', g: 0, add: true, drag: 0 });
     }
     for (const e of enemies) {
-      if (e.dead || !inPlayerBeam(e.x + e.w / 2, e.y + e.h / 2, 12)) continue;
-      burnEnemy(e, p, dt);
+      const hit = e.dead ? false : inPlayerBeam(e.x + e.w / 2, e.y + e.h / 2, 12);
+      if (!hit) continue;
+      burnEnemy(e, p, dt, hit);
       if (ABILITIES.pogo && !p.grounded && Math.sin(p.beamAng) > 0.7 && p.pogoCD <= 0) { p.vy = -pogoVel(); p.jumping = false; p.pogoCD = 0.35; }
     }
   } else p.rays = null;
@@ -993,7 +1139,7 @@ function tick(dt) {
   if (state === 'reveal') {
     stateT += dt; tickParticles(dt);
     const go = take('jump') | take('interact') | take('flash') | take('start') | take('pause');
-    if (stateT > 2.2 && go) { state = 'play'; clearPressed(); toast(`${reveal.u.name}: +${reveal.to - reveal.from} lantern oil.`, 2.4); }
+    if (stateT > 2.2 && go) { state = 'play'; clearPressed(); toast(reveal.u.kind === 'mask' ? `${reveal.u.name}: +1 mask.` : `${reveal.u.name}: +${reveal.to - reveal.from} lantern oil.`, 2.4); }
     return;
   }
   if (state === 'dying') { stateT += dt; tickParticles(dt); if (stateT > 1.5) respawnAtCheckpoint(); return; }
@@ -1018,6 +1164,7 @@ function tick(dt) {
   } else tickPlayer(dt);
   if (state !== 'play') return;
   traceBeam();
+  tickGlass(dt);
   // While a Keeper's Log is open the world keeps moving, but the Murk holds still.
   if (!logOpen) {
     tickEnemies(dt);
@@ -1054,16 +1201,23 @@ function tick(dt) {
   }
 
   tickLamps(dt); tickEmbers(dt);
-  UPG_DEF.forEach((u, i) => {
-    if (upgrades.got.has(i)) return;
-    if (Math.abs((u.x + 0.5) * TILE - pcx) < 22 && Math.abs(u.gy * TILE - 14 - pcy) < 30) {
-      const from = P.maxFuel;
-      upgrades.got.add(i); upgrades.fuel += u.amt; P.maxFuel += u.amt; P.fuel = P.maxFuel; P.beamOn = false; addShake(8);
-      burst((u.x + 0.5) * TILE, u.gy * TILE - 14, 60, { color: '#f2b347', add: true, smin: 80, smax: 360, lmin: 0.5, lmax: 1.2 });
-      reveal = { u, from, to: P.maxFuel, x: (u.x + 0.5) * TILE - cam.x, y: u.gy * TILE - 14 - cam.y };
+  for (const u of upgs) {
+    if (upgrades.got.has(u.i) || !u.free) continue;
+    if (u.sealed) {                                     // freed from a seal: drifts down to you on the light
+      const dx = pcx - u.px, dy = pcy - u.py, d = Math.hypot(dx, dy) || 1, sp = Math.min(260, 60 + d);
+      u.px += dx / d * sp * dt; u.py += dy / d * sp * dt;
+      if (Math.random() < dt * 20) burst(u.px, u.py, 1, { color: '#cfe8ff', add: true, smin: 10, smax: 40, lmin: 0.3, lmax: 0.6 });
+    }
+    if (Math.abs(u.px - pcx) < 22 && Math.abs(u.py - pcy) < 30) {
+      const mask = u.kind === 'mask', from = mask ? P.maxMasks : P.maxFuel;
+      upgrades.got.add(u.i); P.beamOn = false; addShake(8);
+      if (mask) { upgrades.masks += u.amt; P.maxMasks += u.amt; P.masks = P.maxMasks; }
+      else { upgrades.fuel += u.amt; P.maxFuel += u.amt; P.fuel = P.maxFuel; }
+      burst(u.px, u.py, 60, { color: mask ? '#bfe6ff' : '#f2b347', add: true, smin: 80, smax: 360, lmin: 0.5, lmax: 1.2 });
+      reveal = { u, from, to: mask ? P.maxMasks : P.maxFuel, x: u.px - cam.x, y: u.py - cam.y };
       state = 'reveal'; stateT = 0; clearPressed();
     }
-  });
+  }
 
   // Interact: read lore stones or turn mirrors
   if (take('interact')) {
@@ -1375,13 +1529,12 @@ function drawProps() {
     ctx.restore();
   }
   // Upgrades (Oil Flask)
-  UPG_DEF.forEach((u, i) => {
-    if (upgrades.got.has(i)) return;
-    const px = (u.x + 0.5) * TILE, py = u.gy * TILE - 14 + Math.sin(time * 2.2) * 3;
-    ctx.fillStyle = '#3a2c1c'; ctx.fillRect(px - 3, py - 13, 6, 4);
-    ctx.fillStyle = '#6b5434'; ctx.beginPath(); ctx.moveTo(px - 3, py - 9); ctx.lineTo(px - 8, py - 2); ctx.lineTo(px - 8, py + 8); ctx.lineTo(px + 8, py + 8); ctx.lineTo(px + 8, py - 2); ctx.lineTo(px + 3, py - 9); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#f2b347'; ctx.fillRect(px - 6, py, 12, 7);
-  });
+  for (const u of upgs) {
+    if (upgrades.got.has(u.i)) continue;
+    const py = u.py + Math.sin(time * 2.2) * 3;
+    if (u.kind === 'mask') drawHeart(ctx, u.px, py, 1); else drawFlask(ctx, u.px, py, 1);
+  }
+  drawTanks(); drawDarkglass();
   // Lore stones
   for (const l of LORE) {
     const px = (l.x + 0.5) * TILE, py = l.gy * TILE;
@@ -1457,7 +1610,8 @@ function collectLights() {
     L.push(b.lit ? { x: px, y: py, r: 120 + 120 * b.glow + 6 * Math.sin(time * 9 + b.x), i: 1 } : { x: px, y: py + 6, r: 42, i: 0.6 });
   }
   for (const l of LORE) L.push({ x: (l.x + 0.5) * TILE, y: l.gy * TILE - 18, r: 46, i: 0.55 });
-  UPG_DEF.forEach((u, i) => { if (!upgrades.got.has(i)) L.push({ x: (u.x + 0.5) * TILE, y: u.gy * TILE - 14, r: 70, i: 0.9 }); });
+  for (const u of upgs) if (!upgrades.got.has(u.i)) L.push({ x: u.px, y: u.py, r: u.free ? 70 : 34, i: u.free ? 0.9 : 0.5 });
+  for (const t of tanks) L.push({ x: (t.x + t.w / 2) * TILE, y: (t.y + t.h / 2) * TILE, r: 40 + 50 * t.shimmer, i: 0.35 + 0.5 * t.shimmer });
   for (const l of lamps) {
     const fx = (l.x + 0.5) * TILE, k = clamp(l.kindle / lampNeed(l), 0, 1);
     L.push({ x: fx, y: lampFY(l) + 10, r: l.lit ? 40 + (T.lampRadius + 60) * l.glow + 4 * Math.sin(time * 8 + l.x) : 26 + 30 * k, i: l.lit ? 0.6 + 0.4 * l.glow : 0.5 });
@@ -1629,6 +1783,20 @@ function renderBeamMask(ox, oy) {
   rg.addColorStop(0, 'rgba(0,0,0,1)'); rg.addColorStop(0.55, 'rgba(0,0,0,.8)'); rg.addColorStop(1, 'rgba(0,0,0,0)');
   bctx.fillStyle = rg; bctx.fillRect(o.x - R, o.y - R, R * 2, R * 2);
   bctx.globalCompositeOperation = 'source-over';
+  // Light bent by water tanks: each bundle glows from where it leaves the tank.
+  const R2 = T.beamRange * T.relayRange;
+  for (const g of p.subs || []) {
+    let sx = 0, sy = 0; for (const q of g.segs) { sx += q.x0; sy += q.y0; } sx /= g.segs.length; sy /= g.segs.length;
+    const lens = g.via.kind === 'lens', gr = bctx.createRadialGradient(sx, sy, 0, sx, sy, R2);
+    gr.addColorStop(0, `rgba(255,255,255,${lens ? 0.95 : 0.85})`); gr.addColorStop(0.6, 'rgba(255,255,255,.55)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    bctx.fillStyle = gr; bctx.beginPath(); g.poly.forEach((pt, i) => i ? bctx.lineTo(pt.x, pt.y) : bctx.moveTo(pt.x, pt.y)); bctx.closePath(); bctx.fill('evenodd');
+    if (g.segs.length < 3) { bctx.strokeStyle = 'rgba(255,255,255,.6)'; bctx.lineWidth = 6; for (const q of g.segs) { bctx.beginPath(); bctx.moveTo(q.x0, q.y0); bctx.lineTo(q.x1, q.y1); bctx.stroke(); } }
+  }
+  for (const fc of p.foci || []) {
+    const gr = bctx.createRadialGradient(fc.x, fc.y, 0, fc.x, fc.y, 40);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    bctx.fillStyle = gr; bctx.fillRect(fc.x - 40, fc.y - 40, 80, 80);
+  }
 }
 function drawBeam() {
   const p = P, o = p.beamO, R = T.beamRange;
@@ -1647,6 +1815,12 @@ function drawBeam() {
     if (r.len < R - 4) { const k = (1 - r.len / R) * Math.exp(-off * off * 2.6); glow(o.x + Math.cos(r.a) * r.len, o.y + Math.sin(r.a) * r.len, 16 + 12 * k, `rgba(255,200,120,${0.2 * k * fl})`); }
   }
   glow(o.x, o.y, 20, `rgba(255,240,200,${0.45 * fl})`);
+  for (const fc of p.foci || []) {
+    const k = clamp(fc.n / 10, 0.3, 1);
+    glow(fc.x, fc.y, 26 + 6 * Math.sin(time * 40), `rgba(255,250,230,${0.8 * k * fl})`);
+    glow(fc.x, fc.y, 60, `rgba(255,200,120,${0.3 * k * fl})`);
+    if (Math.random() < 0.5) burst(fc.x, fc.y, 1, { color: '#fff6dc', add: true, smin: 30, smax: 120, lmin: 0.1, lmax: 0.25 });
+  }
 }
 const tintCv = document.createElement('canvas'), tctx = tintCv.getContext('2d');
 function tintMask(col) {
@@ -1786,6 +1960,58 @@ function drawPause() {
   ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(233,220,184,.6)'; ctx.font = `italic 14px ${FONT}`; ctx.fillText('Esc / P to resume', VW / 2, 410);
   drawVersion();
 }
+function drawHeart(c, x, y, k) {
+  c.save(); c.translate(x, y); c.scale(k, k);
+  c.fillStyle = 'rgba(160,220,255,.85)'; c.strokeStyle = '#e8f6ff'; c.lineWidth = 1.2;
+  c.beginPath(); c.moveTo(0, 9); c.bezierCurveTo(-12, 0, -9, -10, 0, -4); c.bezierCurveTo(9, -10, 12, 0, 0, 9); c.closePath(); c.fill(); c.stroke();
+  c.fillStyle = 'rgba(255,255,255,.7)'; c.beginPath(); c.ellipse(-4, -3, 1.6, 2.6, -0.5, 0, 7); c.fill();
+  c.restore();
+}
+function drawTanks() {
+  for (const t of tanks) {
+    const px = t.x * TILE, py = t.y * TILE, w = t.w * TILE, h = t.h * TILE, k = t.shimmer;
+    if (!isSolid(t.x, t.y - 1)) {              // hanging tank: chains up to the ceiling
+      let top = t.y - 1; while (top > 0 && !isSolid(t.x, top)) top--;
+      ctx.strokeStyle = '#2c3a44'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(px + 6, py); ctx.lineTo(px + 6, (top + 1) * TILE); ctx.moveTo(px + w - 6, py); ctx.lineTo(px + w - 6, (top + 1) * TILE); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.fillStyle = '#18252e'; ctx.fillRect(px, py + h - 4, w, 4); ctx.fillRect(px, py, w, 3);     // brass-dark rims
+    const g = ctx.createLinearGradient(0, py + 6, 0, py + h - 4);
+    g.addColorStop(0, `rgba(70,170,180,${0.35 + 0.3 * k})`); g.addColorStop(1, `rgba(20,80,110,${0.55 + 0.2 * k})`);
+    ctx.fillStyle = g; ctx.fillRect(px + 2, py + 7, w - 4, h - 11);
+    ctx.strokeStyle = `rgba(160,235,240,${0.5 + 0.4 * k})`; ctx.lineWidth = 1.4;
+    ctx.beginPath(); for (let i = 0; i <= w / 4; i++) { const wx = px + 2 + i * 4 * (w - 4) / w, wy = py + 7 + Math.sin(time * 2.6 + wx * 0.1) * 1.4; i ? ctx.lineTo(wx, wy) : ctx.moveTo(wx, wy); } ctx.stroke();
+    ctx.strokeStyle = `rgba(190,240,250,${0.45 + 0.4 * k})`; ctx.strokeRect(px + 1.5, py + 3.5, w - 3, h - 7);
+    ctx.strokeStyle = `rgba(230,250,255,${0.35 + 0.5 * k})`; ctx.lineWidth = 1.6;
+    const cx = px + w / 2, cy = py + h / 2 + 2;
+    if (t.kind === 'lens') { ctx.beginPath(); ctx.ellipse(cx, cy, w / 2 - 7, h / 2 - 8, 0, 0, 7); ctx.stroke(); }
+    else {                                   // prism: triangle with its base toward where it bends light
+      const bx = t.base[0], by = t.base[1], rx = w / 2 - 5, ry = h / 2 - 8;
+      ctx.beginPath(); ctx.moveTo(cx - bx * rx - by * 0, cy - by * ry - bx * 0);
+      ctx.lineTo(cx + bx * rx + (by ? rx : 0), cy + by * ry + (bx ? ry : 0)); ctx.lineTo(cx + bx * rx - (by ? rx : 0), cy + by * ry - (bx ? ry : 0)); ctx.closePath(); ctx.stroke();
+    }
+  }
+}
+function drawDarkglass() {
+  for (const sl of seals) {
+    if (sl.broken) continue;
+    for (const [tx, ty] of sl.tiles) {
+      const px = tx * TILE, py = ty * TILE;
+      ctx.fillStyle = '#120c20'; ctx.fillRect(px, py, TILE, TILE);
+      ctx.fillStyle = 'rgba(120,90,200,.18)'; ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
+      ctx.strokeStyle = `rgba(170,140,255,${0.35 + 0.15 * Math.sin(time * 1.7 + tx + ty)})`; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px + 6, py + 26); ctx.lineTo(px + 14, py + 6); ctx.moveTo(px + 18, py + 28); ctx.lineTo(px + 26, py + 12); ctx.stroke();
+      if (sl.crack > 0) {                      // cracks spread as the focus works on it
+        const rnd2 = mulberry(tx * 31 + ty * 17);
+        ctx.strokeStyle = `rgba(235,225,255,${0.4 + 0.6 * sl.crack})`; ctx.lineWidth = 1.2; ctx.beginPath();
+        const n = 1 + Math.floor(sl.crack * 6);
+        for (let i = 0; i < n; i++) { let x = px + 16, y = py + 16; ctx.moveTo(x, y); for (let j = 0; j < 3; j++) { x += (rnd2() - 0.5) * 18; y += (rnd2() - 0.5) * 18; ctx.lineTo(x, y); } }
+        ctx.stroke();
+      }
+    }
+  }
+}
 // Upgrade found: the world dims, the flask rises into a halo of rays, and the fuel gauge grows.
 function drawFlask(c, x, y, k) {
   c.save(); c.translate(x, y); c.scale(k, k);
@@ -1813,16 +2039,23 @@ function drawReveal() {
     ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(L, -9); ctx.lineTo(L, 9); ctx.closePath(); ctx.fill();
   }
   ctx.restore();
-  drawFlask(ctx, fx, fy + Math.sin(time * 2.2) * 3 * halo, 1 + 3.2 * ease((t - 0.1) / 0.9));
+  (r.u.kind === 'mask' ? drawHeart : drawFlask)(ctx, fx, fy + Math.sin(time * 2.2) * 3 * halo, 1 + 3.2 * ease((t - 0.1) / 0.9));
   // title card
   const a1 = ease((t - 0.9) / 0.5);
   ctx.globalAlpha = a1; ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(233,220,184,.7)'; ctx.font = `italic 14px ${FONT}`; ctx.fillText('— Lantern upgrade found —', cx, 292);
+  ctx.fillStyle = 'rgba(233,220,184,.7)'; ctx.font = `italic 14px ${FONT}`; ctx.fillText(r.u.kind === 'mask' ? '— Upgrade found —' : '— Lantern upgrade found —', cx, 292);
   ctx.fillStyle = '#f2c46d'; ctx.font = `bold ${34 + 6 * (1 - a1)}px ${FONT}`; ctx.fillText(r.u.name.toUpperCase().split('').join(' '), cx, 334);
-  ctx.fillStyle = '#e3d8bd'; ctx.font = `16px ${FONT}`; ctx.fillText('Your lantern holds more oil. The beam burns longer.', cx, 364);
-  // fuel gauge growing from old to new capacity
+  ctx.fillStyle = '#e3d8bd'; ctx.font = `16px ${FONT}`;
+  ctx.fillText(r.u.kind === 'mask' ? 'Another mask shields your flame.' : 'Your lantern holds more oil. The beam burns longer.', cx, 364);
   const a2 = ease((t - 1.2) / 0.3), grow = ease((t - 1.4) / 0.7), bw = 3.2, bx = cx - r.to * bw / 2, by = 392;
   ctx.globalAlpha = a2;
+  if (r.u.kind === 'mask') {                     // masks row: the new one pops in
+    const n = r.to, x0 = cx - (n - 1) * 15;
+    for (let i = 0; i < n; i++) { const isNew = i >= r.from, sc = isNew ? 1.4 * ease((t - 1.4) / 0.4) : 1.4; if (sc > 0.01) { ctx.save(); ctx.translate(x0 + i * 30, by + 8); ctx.scale(sc, sc); drawMaskIcon(0, 0, true, false); ctx.restore(); } }
+    if (t > 2.2) { ctx.globalAlpha = 0.55 + 0.45 * Math.sin(time * 3); ctx.fillStyle = '#f2c46d'; ctx.font = `italic 14px ${FONT}`; ctx.fillText('Press Jump, E, or tap to continue', cx, 480); }
+    ctx.globalAlpha = 1; return;
+  }
+  // fuel gauge growing from old to new capacity
   ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(bx - 3, by - 3, r.to * bw + 6, 20);
   ctx.fillStyle = '#c98a2c'; ctx.fillRect(bx, by, r.from * bw, 14);
   ctx.fillStyle = `rgba(255,214,120,${0.75 + 0.25 * Math.sin(time * 8)})`; ctx.fillRect(bx + r.from * bw, by, (r.to - r.from) * bw * grow, 14);
