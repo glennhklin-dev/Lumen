@@ -163,7 +163,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.15.1';
+const VERSION = '0.16.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -413,7 +413,11 @@ const ETYPES = { murk: { w: 24, h: 20, hp: 1.6 }, wing: { w: 22, h: 14, hp: 1.0 
 function makeEnemy(type, cx, y, extra) {
   const d = ETYPES[type];
   return { type, x: cx - d.w / 2, y, w: d.w, h: d.h, vx: 0, vy: 0, dir: -1, hp: d.hp, stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0,
-    dead: false, t: Math.random() * 10, grounded: false, state: 'idle', st: 0, cd: rnd(0.5, 1.5), turnT: 0, hx: cx, hy: y + d.h / 2, ...extra };
+    dead: false, t: Math.random() * 10, grounded: false, state: 'idle', st: 0, cd: rnd(0.5, 1.5), turnT: 0, hx: cx, hy: y + d.h / 2,
+    // personality: no two move quite alike
+    agg: rnd(0.7, 1.3), lurk: rnd(20, 150), pref: rnd(60, 120), pace: rnd(0.8, 2.2), seed: rnd(0, 6.28), patience: rnd(4, 11),
+    tac: 'press', tt: 0, side: 0, lurkT: 0, bored: 0, dodgeCD: 0, spitT: 0, spitCD: rnd(1, 3), feint: false, chargeWind: 0, charge: 0, chargeCD: rnd(1, 3),
+    pat: 'direct', dbl: false, curve: 0, ...extra };
 }
 function resetEnemies() {
   enemies = ENEMY_DEF.map(d => {
@@ -422,7 +426,7 @@ function resetEnemies() {
     if (d.t === 'drip') return makeEnemy('drip', cx, d.y * TILE, { state: 'hang' });
     return makeEnemy(d.t, cx, d.y * TILE - ETYPES[d.t].h);
   });
-  resetPools();
+  resetPools(); globs = [];
 }
 
 /* Murk pools: dark spots that breed Murklings, limited by a global mob cap and a per-pool cap.
@@ -853,6 +857,9 @@ function burnEnemy(e, p, dt, hit) {
     return;
   }
   if (e.type === 'drip' && (e.state === 'hang' || e.state === 'tremble')) { e.state = 'fall'; e.vy = 60; }
+  if (e.type === 'murk' && e.grounded && e.dodgeCD <= 0 && e.hp > 0.4 && Math.random() < dt * 1.6) {   // flinch out of the light
+    e.dodgeCD = rnd(1.5, 3); e.vy = -rnd(280, 380); e.vx = Math.sign(dx || -e.dir) * rnd(140, 220); e.wind = 0; e.spitT = 0; e.tac = 'back'; e.tt = rnd(0.4, 0.8); return;
+  }
   e.hp -= T.beamDps * (hit.focus ? T.focusMult : 1) * dt; e.flash = 0.05; e.wind = 0; e.stun = Math.max(e.stun, 0.15);
   if (e.type === 'wing') {                              // flyers are blown about freely
     e.vx = clamp(e.vx + dx * lim * 10 * dt, -lim * 1.3, lim * 1.3); e.vy = clamp(e.vy + dy * lim * 10 * dt, -lim * 1.3, lim * 1.3);
@@ -1019,34 +1026,130 @@ function tickPlayer(dt) {
    Enemies — Murkling (walker, lunges), Shellback (armoured front), Gloomwing (swooping flyer),
    Dripper (ceiling ambusher that becomes a crawler)
    ===================================================================== */
+// Is this point inside a burning wick-lamp's warmth? Returns the lamp.
+function warmAt(x, y) {
+  for (const l of lamps) if (l.lit && l.charges > 0 && Math.abs(x - (l.x + 0.5) * TILE) < T.lampRadius * 0.9 && Math.abs(y - lampZY(l)) < T.lampRadius * 0.9) return l;
+  return null;
+}
+/* Walkers (Murklings, Shellbacks, landed Drippers). Each picks short-lived tactics with its own
+   temperament: press in and lunge (sometimes a feint), circle at a distance, hop in, fall back,
+   or spit a murk glob. Near a lamp they lurk at their own distance in the dark, pace, lose
+   patience and drift off; they spread out instead of stacking. */
 function aiWalker(e, dt, dx, dy) {
-  const p = P, murk = e.type === 'murk', shell = e.type === 'shell';
+  const p = P, murk = e.type === 'murk', shell = e.type === 'shell', ecx = e.x + e.w / 2, ecy = e.y + e.h / 2, pcx = ecx + dx;
+  e.tt -= dt; e.dodgeCD -= dt; e.spitCD -= dt; e.chargeCD -= dt; if (e.bored > 0) e.bored -= dt;
+  let want = null, speed = 0;          // desired x position and speed
   if (e.stun > 0) {
     e.stun -= dt; e.vx = approach(e.vx, 0, 900 * dt);
-  } else if (e.wind > 0) {
+  } else if (e.wind > 0) {             // lunge wind-up (or a feint)
     e.vx = approach(e.vx, 0, 1200 * dt);
     e.wind -= dt;
-    if (e.wind <= 0) { e.vx = e.dir * 300; e.vy = -260; e.lungeCD = 1.3; }
-  } else {
-    const chase = Math.abs(dx) < (shell ? 260 : 230) && Math.abs(dy) < 90 && p.hazard <= 0;
-    if (chase) {
-      const want = Math.sign(dx) || e.dir;
-      if (shell) {                       // shellbacks turn slowly, leaving their back open for a moment
-        if (want !== e.dir) { e.turnT += dt; if (e.turnT > 0.75) { e.dir = want; e.turnT = 0; } } else e.turnT = 0;
-      } else e.dir = want;
+    if (e.wind <= 0) {
+      if (e.feint) { e.vx = -e.dir * 170; e.vy = -200; e.tac = 'back'; e.tt = rnd(0.4, 0.8); e.lungeCD = rnd(0.5, 1); }
+      else { e.vx = e.dir * rnd(260, 340); e.vy = -rnd(200, 300); e.lungeCD = rnd(0.9, 1.6); e.tac = Math.random() < 0.5 ? 'back' : 'circle'; e.tt = rnd(0.5, 1.1); }
     }
-    const speed = murk ? (chase ? 105 : 50) : shell ? (chase && Math.sign(dx) === e.dir ? 45 : 28) : (chase ? 70 : 35);
-    const ax = e.dir > 0 ? e.x + e.w + 2 : e.x - 2;
-    const tx = Math.floor(ax / TILE);
-    const blocked = isSolid(tx, Math.floor((e.y + e.h - 4) / TILE)) || !isSolid(tx, Math.floor((e.y + e.h + 2) / TILE));
-    if (e.grounded && blocked) { if (chase) e.vx = approach(e.vx, 0, 1200 * dt); else { e.dir *= -1; e.turnT = 0; } }
-    else e.vx = approach(e.vx, e.dir * speed, 700 * dt);
-    if (murk && chase && e.grounded && e.lungeCD <= 0 && Math.abs(dx) < 90 && !blocked) { e.wind = 0.38; }
+  } else if (e.spitT > 0) {            // swelling up to spit: a tell
+    e.vx = approach(e.vx, 0, 1200 * dt); e.spitT -= dt;
+    if (Math.random() < dt * 30) burst(ecx, e.y + 4, 1, { color: '#3a2a66', g: -60, smin: 10, smax: 40, lmin: 0.2, lmax: 0.4, zmin: 1.5, zmax: 3 });
+    if (e.spitT <= 0) { spitGlob(e, pcx, ecy + dy); e.spitCD = rnd(2.5, 4.5); e.tt = 0; }
+  } else if (e.chargeWind > 0) {       // shellback scrapes its feet, then rushes shell-first
+    e.vx = approach(e.vx, 0, 1200 * dt); e.chargeWind -= dt;
+    if (Math.random() < dt * 25) dust(e.x + (e.dir > 0 ? 2 : e.w - 2), e.y + e.h, 1, -e.dir * Math.PI / 2 - Math.PI / 2);
+    if (e.chargeWind <= 0) { e.charge = rnd(0.55, 0.8); addShake(1.5); }
+  } else if (e.charge > 0) {
+    e.charge -= dt; e.vx = e.dir * 250;
+    if (e.charge <= 0) e.chargeCD = rnd(2.5, 4.5);
+  } else {
+    const sees = Math.abs(dx) < (shell ? 260 : 240) && Math.abs(dy) < 120 && p.hazard <= 0 && e.bored <= 0;
+    const warm = sees ? warmAt(pcx, ecy + dy) : null;
+    if (sees && warm) {
+      // The player shelters in lamp-warmth: lurk in the dark at a personal distance, pace, then give up.
+      const lx = (warm.x + 0.5) * TILE, edge = T.lampRadius * 0.9;
+      if (!e.side) e.side = Math.sign(ecx - lx) || (Math.random() < 0.5 ? -1 : 1);
+      want = lx + e.side * (edge + e.w / 2 + e.lurk + Math.sin(e.t * e.pace + e.seed) * 26);
+      speed = murk ? 70 : 32;
+      e.lurkT += dt;
+      if (murk && e.spitCD <= 0 && Math.random() < dt * 0.25 * e.agg) e.spitT = 0.45;
+      if (e.lurkT > e.patience) { e.bored = rnd(3, 7); e.lurkT = 0; e.dir = e.side; e.side = 0; }
+    } else if (sees) {
+      e.side = 0; e.lurkT = Math.max(0, e.lurkT - dt);
+      if (shell) {                     // slow turner; may brace and charge when you're in front of it
+        const face = Math.sign(dx) || e.dir;
+        if (face !== e.dir) { e.turnT += dt; if (e.turnT > 0.75) { e.dir = face; e.turnT = 0; } } else e.turnT = 0;
+        want = pcx; speed = Math.sign(dx) === e.dir ? 45 : 28;
+        if (e.grounded && Math.sign(dx) === e.dir && Math.abs(dx) > 80 && Math.abs(dx) < 220 && Math.abs(dy) < 40 && e.chargeCD <= 0) { e.chargeWind = 0.55; e.chargeCD = 99; }
+      } else {
+        if (e.tt <= 0) {               // pick the next move
+          const above = dy < -60, roll = Math.random();
+          if (murk && above && e.spitCD <= 0 && roll < 0.6) e.tac = 'spit';
+          else if (roll < 0.45 * e.agg) e.tac = 'press';
+          else if (roll < 0.7) e.tac = 'circle';
+          else if (roll < 0.85) e.tac = 'hop';
+          else e.tac = 'back';
+          e.tt = rnd(0.6, 1.6);
+        }
+        const toward = Math.sign(dx) || e.dir;
+        if (e.tac === 'press') { want = pcx; speed = murk ? 110 * e.agg : 70; }
+        else if (e.tac === 'circle') { want = pcx - toward * e.pref + Math.sin(e.t * e.pace + e.seed) * 30; speed = murk ? 80 : 55; }
+        else if (e.tac === 'back') { want = ecx - toward * 90; speed = murk ? 90 : 50; }
+        else if (e.tac === 'hop') { if (e.grounded) { e.vy = -rnd(360, 470); e.vx = toward * rnd(110, 190); } e.tac = 'press'; }
+        else if (e.tac === 'spit') { if (e.spitCD <= 0 && e.grounded) e.spitT = 0.45; e.tac = 'circle'; }
+        if (murk && e.tac === 'press' && e.grounded && e.lungeCD <= 0 && Math.abs(dx) < 70 + 40 * e.agg) {
+          e.dir = toward; e.wind = rnd(0.3, 0.5); e.feint = Math.random() < 0.25;
+        }
+      }
+    } else {
+      e.side = 0;                       // wander; pause now and then
+      if (e.tt <= 0) { e.tac = Math.random() < 0.3 ? 'idle' : 'walk'; e.tt = rnd(1, 3); }
+      speed = e.tac === 'idle' ? 0 : murk ? 50 : shell ? 28 : 35;
+      want = ecx + e.dir * 40;
+    }
+  }
+  if (want !== null && e.wind <= 0 && e.spitT <= 0 && e.chargeWind <= 0 && e.charge <= 0 && e.stun <= 0) {
+    // spread out: shy away from neighbours instead of stacking
+    let sep = 0;
+    for (const o of enemies) {
+      if (o === e || o.dead || o.type === 'wing' || o.state === 'hang') continue;
+      const ox = o.x + o.w / 2 - ecx;
+      if (Math.abs(ox) < 38 && Math.abs(o.y - e.y) < 24) sep -= Math.sign(ox || (Math.random() - 0.5)) * (38 - Math.abs(ox));
+    }
+    want += sep * 5; if (sep && speed < 40) speed = 40;
+    const diff = want - ecx, mdir = Math.abs(diff) < 6 ? 0 : Math.sign(diff);
+    if (!shell && mdir && Math.abs(dx) > 8 && e.tac !== 'back') e.dir = mdir; else if (!shell && mdir) e.dir = e.tac === 'back' ? (Math.sign(dx) || e.dir) : mdir;
+    const ax = mdir > 0 ? e.x + e.w + 2 : e.x - 2, tx = Math.floor(ax / TILE), fy = Math.floor((e.y + e.h - 4) / TILE);
+    const wall = mdir && isSolid(tx, fy), drop = mdir && !isSolid(tx, Math.floor((e.y + e.h + 2) / TILE));
+    if (wall && e.grounded && !isSolid(tx, fy - 1) && !isSolid(Math.floor(ecx / TILE), fy - 1) && !shell) { e.vy = -430; e.vx = mdir * 90; }   // hop up a step
+    else if ((wall || (drop && !(dy > 40))) && e.grounded) { e.vx = approach(e.vx, 0, 1200 * dt); if (e.tac === 'walk') { e.dir *= -1; } }
+    else e.vx = approach(e.vx, mdir * speed, 700 * dt);
   }
   e.vy = Math.min(e.vy + 2000 * dt, 700);
-  if (moveX(e, e.vx * dt)) { e.vx = 0; if (e.stun <= 0) e.dir *= -1; }
+  if (moveX(e, e.vx * dt)) { e.vx = 0; if (e.charge > 0) { e.charge = 0; e.stun = 0.9; e.chargeCD = rnd(2.5, 4.5); addShake(4); dust(ecx + e.dir * e.w / 2, ecy, 8); } else if (e.stun <= 0 && e.tac === 'walk') e.dir *= -1; }
   const r = moveY(e, e.vy * dt, false, 0);
   e.grounded = r === 'floor'; if (r) e.vy = 0;
+}
+// Murk globs: lobbed blobs of dark. Light burns them out of the air; lamp-warmth dissolves them.
+let globs = [];
+function spitGlob(e, tx, ty) {
+  const sx = e.x + e.w / 2, sy = e.y + 4, t = clamp(Math.abs(tx - sx) / 230, 0.45, 0.9), G = 900;
+  globs.push({ x: sx, y: sy, vx: (tx - sx) / t, vy: (ty - sy) / t - 0.5 * G * t, life: 3 });
+  burst(sx, sy, 8, { color: '#2a1f4a', ang: -Math.PI / 2, spread: 1, smin: 30, smax: 120, lmin: 0.2, lmax: 0.5, zmin: 2, zmax: 4 });
+}
+function tickGlobs(dt) {
+  for (const g of globs) {
+    g.vy += 900 * dt; g.x += g.vx * dt; g.y += g.vy * dt; g.life -= dt;
+    const pop = (col, n) => { g.dead = true; burst(g.x, g.y, n, { color: col, smin: 30, smax: 140, lmin: 0.2, lmax: 0.5, add: col !== '#1b1533' }); };
+    if (isSolid(Math.floor(g.x / TILE), Math.floor(g.y / TILE)) || tileAt(Math.floor(g.x / TILE), Math.floor(g.y / TILE)) === '~' || g.life <= 0) { pop('#1b1533', 8); continue; }
+    if (warmAt(g.x, g.y)) { pop('#ffb060', 10); continue; }
+    if (inPlayerBeam(g.x, g.y, 6)) { pop('#ffe3a1', 10); continue; }
+    if (overlap({ x: P.x + 2, y: P.y + 3, w: P.w - 4, h: P.h - 3 }, { x: g.x - 5, y: g.y - 5, w: 10, h: 10 })) { pop('#1b1533', 10); hurtPlayer(g.x); }
+  }
+  globs = globs.filter(g => !g.dead);
+}
+function drawGlobs() {
+  for (const g of globs) {
+    ctx.fillStyle = '#120c22'; ctx.beginPath(); ctx.ellipse(g.x, g.y, 6, 5, Math.atan2(g.vy, g.vx), 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(150,110,240,.7)'; ctx.lineWidth = 1.2; ctx.stroke();
+  }
 }
 function aiWing(e, dt, dx, dy) {
   const d = Math.hypot(dx, dy) || 1;
@@ -1055,17 +1158,33 @@ function aiWing(e, dt, dx, dy) {
     e.stun -= dt; e.vx *= 1 - 3 * dt; e.vy *= 1 - 3 * dt;
     if (e.state === 'tele' || e.state === 'swoop') { e.state = 'back'; e.cd = 1.2; }
   } else if (e.state === 'hover') {
-    const tx = e.hx + Math.sin(e.t * 1.3) * 34, ty = e.hy + Math.sin(e.t * 2.1) * 12;
+    const tx = (e.hx2 ?? e.hx) + Math.sin(e.t * 1.3 * e.pace + e.seed) * 34, ty = (e.hy2 ?? e.hy) + Math.sin(e.t * 2.1 + e.seed) * 12;
     e.vx = approach(e.vx, clamp((tx - e.x - e.w / 2) * 3, -90, 90), 400 * dt);
     e.vy = approach(e.vy, clamp((ty - e.y - e.h / 2) * 3, -90, 90), 400 * dt);
-    if (d < 250 && e.cd <= 0 && P.hazard <= 0) { e.state = 'tele'; e.st = 0.5; }
+    if (d < 250 && e.cd <= 0 && P.hazard <= 0) {
+      e.state = 'tele'; e.st = rnd(0.35, 0.65);
+      const k = Math.random(); e.pat = k < 0.45 ? 'direct' : k < 0.7 ? 'arc' : k < 0.85 ? 'double' : 'feint';
+    }
   } else if (e.state === 'tele') {                    // eyes flare, wings beat hard: dodge window
     e.vx *= 1 - 6 * dt; e.vy *= 1 - 6 * dt; e.st -= dt; e.dir = Math.sign(dx) || e.dir;
-    if (e.st <= 0) { e.state = 'swoop'; e.st = 0.6; e.vx = dx / d * 330; e.vy = dy / d * 330; }
+    if (e.st <= 0) {
+      if (e.pat === 'feint') { e.state = 'back'; e.cd = rnd(0.4, 0.9); e.vx = -dx / d * 120; e.vy = -80; }
+      else {
+        let a = Math.atan2(dy, dx); e.curve = 0;
+        if (e.pat === 'arc') { e.curve = (Math.random() < 0.5 ? -1 : 1) * 2.4; a -= e.curve * 0.3; }   // swing wide, curve in
+        e.state = 'swoop'; e.st = 0.6; const sp = rnd(300, 360); e.vx = Math.cos(a) * sp; e.vy = Math.sin(a) * sp;
+        e.dbl = e.pat === 'double';
+      }
+    }
   } else if (e.state === 'swoop') {
-    e.st -= dt; if (e.st <= 0) { e.state = 'back'; e.cd = 1.6; }
+    if (e.curve) { const a = Math.atan2(e.vy, e.vx) + e.curve * dt, sp = Math.hypot(e.vx, e.vy); e.vx = Math.cos(a) * sp; e.vy = Math.sin(a) * sp; }
+    e.st -= dt;
+    if (e.st <= 0) {
+      if (e.dbl) { e.dbl = false; e.state = 'tele'; e.st = 0.22; e.pat = 'direct'; }   // quick second pass
+      else { e.state = 'back'; e.cd = rnd(1.1, 2.2); e.hx2 = e.hx + rnd(-70, 70); e.hy2 = e.hy + rnd(-30, 25); }
+    }
   } else {                                            // fly back to the roost
-    const bx = e.hx - (e.x + e.w / 2), by = e.hy - (e.y + e.h / 2), bd = Math.hypot(bx, by) || 1;
+    const bx = (e.hx2 ?? e.hx) - (e.x + e.w / 2), by = (e.hy2 ?? e.hy) - (e.y + e.h / 2), bd = Math.hypot(bx, by) || 1;
     e.vx = approach(e.vx, bx / bd * 140, 500 * dt); e.vy = approach(e.vy, by / bd * 140, 500 * dt);
     if (bd < 20) e.state = 'hover';
   }
@@ -1197,7 +1316,7 @@ function tick(dt) {
   if (!logOpen) {
     tickEnemies(dt);
     if (state !== 'play') return;
-    tickPools(dt); tickDarkSpawns(dt);
+    tickGlobs(dt); tickPools(dt); tickDarkSpawns(dt);
   }
 
   // Mirrors animate toward their angle
@@ -1668,7 +1787,7 @@ function render() {
     if (X > cam.x + VW + 40 || X + ch.c.width < cam.x - 40 || Y > cam.y + VH + 40 || Y + ch.c.height < cam.y - 40) continue;
     ctx.drawImage(ch.c, X, Y);
   }
-  drawProps();
+  drawProps(); drawGlobs();
   for (const e of enemies) if (!e.dead) drawEnemy(e);
   if (state !== 'dying') drawPlayer();
   drawBeamCore();
