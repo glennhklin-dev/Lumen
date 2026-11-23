@@ -205,7 +205,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.19.0';
+const VERSION = '0.19.1';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -859,7 +859,14 @@ function beamSpots(p) {
   const o = p.beamO, dx = Math.cos(p.beamAng), dy = Math.sin(p.beamAng), L = p.spotLen, out = [];
   out.push({ x: o.x + dx * L * 0.45, y: o.y + dy * L * 0.45, r: 60 + 0.25 * L, i: 0.45 });
   out.push({ x: o.x + dx * L, y: o.y + dy * L, r: 70 + 0.3 * L, i: 0.55 });
-  for (const g of p.subs || []) { const q = g.segs[g.segs.length >> 1]; out.push({ x: q.x1, y: q.y1, r: 100, i: 0.5 }); }
+  // Bent light spills the same way: pools along each bundle and across its whole width where it lands.
+  for (const g of p.subs || []) {
+    const n = g.segs.length, mid = g.segs[n >> 1], ends = n >= 3 ? [g.segs[0], mid, g.segs[n - 1]] : [mid];
+    let sx = 0, sy = 0; for (const q of g.segs) { sx += q.x0; sy += q.y0; } sx /= n; sy /= n;
+    const BL = Math.hypot(mid.x1 - sx, mid.y1 - sy);
+    out.push({ x: sx + (mid.x1 - sx) * 0.45, y: sy + (mid.y1 - sy) * 0.45, r: 60 + 0.25 * BL, i: 0.45 });
+    for (const q of ends) out.push({ x: q.x1, y: q.y1, r: 70 + 0.3 * Math.hypot(q.x1 - q.x0, q.y1 - q.y0), i: 0.55 });
+  }
   for (const fc of p.foci || []) out.push({ x: fc.x, y: fc.y, r: 90, i: 0.6 });
   return out;
 }
