@@ -21,6 +21,7 @@
   #aimStick .knob{background:rgba(255,214,140,.5);box-shadow:0 0 18px rgba(255,200,110,.5)}
   .tb{z-index:2}
   #touch.on{display:block}
+  #touch.idle .tb,#touch.idle .stick{opacity:0 !important;pointer-events:none}
   .tb{position:absolute;pointer-events:auto;width:46px;height:46px;border-radius:50%;box-sizing:border-box;
       background:rgba(242,196,109,.10);border:2px solid rgba(242,196,109,.45);color:#f2c46d;
       font:600 13px Georgia,serif;opacity:.75;display:flex;align-items:center;justify-content:center;touch-action:none}
@@ -35,8 +36,9 @@
   #tune label{display:block;margin:4px 0}
   #tune .row{display:flex;justify-content:space-between}
   #tune .v{color:#f2c46d;font-variant-numeric:tabular-nums}
-  #tune input[type=range]{width:100%;margin:2px 0 0}
+  #tune input[type=range]{width:100%;margin:2px 0 0;accent-color:#f2c46d;cursor:pointer}
   #tune .btns{display:flex;gap:6px;margin-top:10px}
+  #tune .x{flex:none;background:none;border:none;color:#7d93a0;font:16px system-ui;cursor:pointer;padding:0 2px}
   #tune button{flex:1;background:#13283a;color:#e9dcb8;border:1px solid #2f5268;border-radius:5px;padding:6px;font:12px system-ui;cursor:pointer}
   #ed{position:fixed;top:8px;left:8px;width:236px;max-height:calc(100% - 16px);overflow:auto;box-sizing:border-box;-webkit-user-select:text;user-select:text;
       background:rgba(6,14,26,.95);border:1px solid #2c4a5c;border-radius:8px;color:#d9e6ea;font:12px/1.35 system-ui,sans-serif;padding:10px;z-index:6}
@@ -94,9 +96,9 @@
 </div>
 
 <div id="tune" hidden>
-  <h3>Feel tuning <small>T to close</small></h3>
+  <h3>Feel tuning <small>T to close · enemies hold still</small></h3>
   <div id="tuneBody"></div>
-  <div class="btns"><button id="tReset">Reset</button><button id="tCopy">Copy JSON</button></div>
+  <div class="btns"><button id="tReset">Reset</button><button id="tCopy">Copy JSON</button><button id="tClose">Close</button></div>
 </div>
 
 <script>
@@ -203,7 +205,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.18.0';
+const VERSION = '0.19.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -232,7 +234,7 @@ const take = a => { if (pressed[a]) { pressed[a] = false; return true; } return 
 const clearPressed = () => { for (const a in pressed) pressed[a] = false; };
 
 addEventListener('keydown', e => {
-  if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && e.target.type !== 'range') return;
   const a = codeTo[e.code]; if (!a) return;
   e.preventDefault();
   if (!e.repeat) pressed[a] = true;
@@ -1396,8 +1398,8 @@ function tick(dt) {
   if (state !== 'play') return;
   traceBeam();
   tickGlass(dt);
-  // While a Keeper's Log is open the world keeps moving, but the Murk holds still.
-  if (!logOpen) {
+  // While a Keeper's Log (or the tuning panel) is open the world keeps moving, but the Murk holds still.
+  if (!logOpen && tuneEl.hidden) {
     tickEnemies(dt);
     if (state !== 'play') return;
     tickGlobs(dt); tickPools(dt); tickDarkSpawns(dt);
@@ -1423,7 +1425,7 @@ function tick(dt) {
         b.lit = true; addShake(4);
         burst(bx, (b.gy - 1) * TILE + 6, 30, { color: '#f6d27a', add: true, smin: 60, smax: 260, ang: -Math.PI / 2, spread: 1.2, g: 80 });
         toast(b.final ? 'The Focus Lens rests in the flame.' : (beacons.indexOf(b) === 0 ? 'Beacon lit. You will return here if your light fails.' : 'Beacon lit.'));
-        if (b.final) { state = 'end'; stateT = -1.4; }
+        if (b.final) { state = 'end'; stateT = -1.4; toasts = []; }
       } else if (P.masks < P.maxMasks) toast('You rest by the flame.', 1.6);
       checkpoint = { x: bx - P.w / 2, y: b.gy * TILE - P.h };
       P.masks = P.maxMasks;
@@ -1446,7 +1448,7 @@ function tick(dt) {
       else { upgrades.fuel += u.amt; P.maxFuel += u.amt; P.fuel = P.maxFuel; }
       burst(u.px, u.py, 60, { color: mask ? '#bfe6ff' : '#f2b347', add: true, smin: 80, smax: 360, lmin: 0.5, lmax: 1.2 });
       reveal = { u, from, to: mask ? P.maxMasks : P.maxFuel, x: u.px - cam.x, y: u.py - cam.y };
-      state = 'reveal'; stateT = 0; clearPressed();
+      state = 'reveal'; stateT = 0; clearPressed(); toasts = [];
     }
   }
 
@@ -1895,7 +1897,8 @@ function render() {
   ctx.restore();
 
   // Darkness with light cut-outs
-  dctx.setTransform(rs, 0, 0, rs, 0, 0);
+  const ls = lightScale;
+  dctx.setTransform(ls, 0, 0, ls, 0, 0);
   dctx.globalCompositeOperation = 'source-over';
   dctx.clearRect(0, 0, VW, VH);
   dctx.fillStyle = `rgba(2,6,14,${T.darkness})`; dctx.fillRect(0, 0, VW, VH);
@@ -1919,7 +1922,7 @@ function render() {
   const beaming = P.beamOn && P.rays && state !== 'dying';
   if (beaming) {
     renderBeamMask(ox, oy);
-    dctx.save(); dctx.setTransform(1, 0, 0, 1, 0, 0); dctx.drawImage(beamCv, 0, 0); dctx.restore();
+    const bb = beamBox; dctx.save(); dctx.setTransform(1, 0, 0, 1, 0, 0); if (bb.w > 0) dctx.drawImage(beamCv, bb.x, bb.y, bb.w, bb.h, bb.x, bb.y, bb.w, bb.h); dctx.restore();
   }
   if (beam.pts.length > 1) {
     dctx.lineCap = 'round'; dctx.lineJoin = 'round';
@@ -1928,7 +1931,7 @@ function render() {
     dctx.strokeStyle = 'rgba(0,0,0,.8)'; dctx.lineWidth = 16; strokePts(dctx, beam.pts);
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.drawImage(dark, 0, 0);
+  ctx.drawImage(dark, 0, 0, canvas.width, canvas.height);
   ctx.setTransform(rs, 0, 0, rs, 0, 0);
 
   // Additive glow pass
@@ -1980,11 +1983,15 @@ function render() {
   ctx.restore();
 
   drawSpores();
-  drawHUD();
-  for (let i = 0; i < toasts.length; i++) {
-    const t = toasts[i], a = clamp(Math.min(t.t, t.max - t.t) * 3, 0, 1);
-    ctx.globalAlpha = a; ctx.fillStyle = '#e9dcb8'; ctx.font = `italic 18px ${FONT}`; ctx.textAlign = 'center';
-    ctx.fillText(t.text, VW / 2, 92 + i * 26); ctx.globalAlpha = 1;
+  if (state !== 'end') {
+    ctx.save(); ctx.scale(uiScale, uiScale); drawHUD(); ctx.restore();
+    ctx.save(); ctx.translate(VW / 2, 0); ctx.scale(uiScale, uiScale);
+    for (let i = 0; i < toasts.length; i++) {
+      const t = toasts[i], a = clamp(Math.min(t.t, t.max - t.t) * 3, 0, 1);
+      ctx.globalAlpha = a; ctx.fillStyle = '#e9dcb8'; ctx.font = `italic 18px ${FONT}`; ctx.textAlign = 'center';
+      ctx.fillText(t.text, 0, 92 + i * 26); ctx.globalAlpha = 1;
+    }
+    ctx.restore();
   }
   let f = fade;
   if (P.hazard > 0) f = Math.max(f, 1 - Math.abs(P.hazard - 0.35) / 0.35);
@@ -2013,10 +2020,19 @@ function beamPath(c, p, f = 1) {
 // Smooth light mask: angular falloff (conic) × distance falloff (radial), clipped to the
 // wall-occluded cone. Rendered once per frame and reused to cut darkness, light the scene and add haze.
 const HAS_CONIC = typeof CanvasRenderingContext2D !== 'undefined' && 'createConicGradient' in CanvasRenderingContext2D.prototype;
+let beamBox = { x: 0, y: 0, w: 0, h: 0 };
 function renderBeamMask(ox, oy) {
-  const p = P, o = p.beamO, R = T.beamRange, half = T.beamHalfAngle * Math.PI / 180, rs = renderScale;
+  const p = P, o = p.beamO, R = T.beamRange, half = T.beamHalfAngle * Math.PI / 180, rs = lightScale;
+  // Work only inside the beam's bounding box (cone, bent light and foci), not the whole screen.
+  let x0 = o.x - R, y0 = o.y - R, x1 = o.x + R, y1 = o.y + R;
+  for (const g of p.subs || []) for (const pt of g.poly) { x0 = Math.min(x0, pt.x - 8); y0 = Math.min(y0, pt.y - 8); x1 = Math.max(x1, pt.x + 8); y1 = Math.max(y1, pt.y + 8); }
+  for (const fc of p.foci || []) { x0 = Math.min(x0, fc.x - 40); y0 = Math.min(y0, fc.y - 40); x1 = Math.max(x1, fc.x + 40); y1 = Math.max(y1, fc.y + 40); }
+  const bx = clamp(Math.floor((x0 + ox) * rs), 0, beamCv.width), by = clamp(Math.floor((y0 + oy) * rs), 0, beamCv.height);
+  const prev = beamBox;
+  beamBox = { x: bx, y: by, w: clamp(Math.ceil((x1 + ox) * rs), 0, beamCv.width) - bx, h: clamp(Math.ceil((y1 + oy) * rs), 0, beamCv.height) - by };
   bctx.setTransform(1, 0, 0, 1, 0, 0); bctx.globalCompositeOperation = 'source-over';
-  bctx.clearRect(0, 0, beamCv.width, beamCv.height);
+  if (prev.w > 0) bctx.clearRect(prev.x, prev.y, prev.w, prev.h);
+  bctx.clearRect(beamBox.x, beamBox.y, beamBox.w, beamBox.h);
   bctx.setTransform(rs, 0, 0, rs, ox * rs, oy * rs);
   if (HAS_CONIC) {
     const cg = bctx.createConicGradient(p.beamAng - Math.PI, o.x, o.y), h = half / (2 * Math.PI);
@@ -2053,10 +2069,10 @@ function drawBeam() {
   ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
   // 1) The visible shaft: brighten what the beam falls on, keeping its own colours.
   ctx.globalCompositeOperation = 'color-dodge'; ctx.globalAlpha = 0.85 * fl;
-  tintMask('rgb(150,132,104)'); ctx.drawImage(tintCv, 0, 0);
+  tintMask('rgb(150,132,104)'); drawTint();
   // 2) Warm haze in the air.
   ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.42 * fl;
-  tintMask('rgb(255,214,150)'); ctx.drawImage(tintCv, 0, 0);
+  tintMask('rgb(255,214,150)'); drawTint();
   ctx.restore();
   // 3) Where it lands: a soft lantern-like glow (the darkness there is lifted in collectLights).
   // Spill: cool and soft, lighting surfaces only. The warm, dusty shaft above is the part that burns.
@@ -2072,18 +2088,25 @@ function drawBeam() {
 const tintCv = document.createElement('canvas'), tctx = tintCv.getContext('2d');
 function tintMask(col) {
   if (tintCv.width !== beamCv.width || tintCv.height !== beamCv.height) { tintCv.width = beamCv.width; tintCv.height = beamCv.height; }
-  tctx.globalCompositeOperation = 'source-over'; tctx.clearRect(0, 0, tintCv.width, tintCv.height);
-  tctx.drawImage(beamCv, 0, 0);
-  tctx.globalCompositeOperation = 'source-in'; tctx.fillStyle = col; tctx.fillRect(0, 0, tintCv.width, tintCv.height);
+  const b = beamBox; if (b.w <= 0 || b.h <= 0) return;
+  tctx.globalCompositeOperation = 'source-over'; tctx.clearRect(b.x, b.y, b.w, b.h);
+  tctx.drawImage(beamCv, b.x, b.y, b.w, b.h, b.x, b.y, b.w, b.h);
+  tctx.globalCompositeOperation = 'source-in'; tctx.fillStyle = col; tctx.fillRect(b.x, b.y, b.w, b.h);
+}
+function drawTint() {                // the tinted box, scaled up onto the full-resolution canvas
+  const b = beamBox, k = canvas.width / tintCv.width; if (b.w <= 0 || b.h <= 0) return;
+  ctx.drawImage(tintCv, b.x, b.y, b.w, b.h, b.x * k, b.y * k, b.w * k, b.h * k);
 }
 function drawPrompts() {
   if (state !== 'play') return;
   const pcx = P.x + P.w / 2, pcy = P.y + P.h / 2;
-  const prompt = (x, y, label) => {
+  const prompt = (x0, y0, label) => {
+    ctx.save(); ctx.translate(x0, y0); ctx.scale(uiScale, uiScale); const x = 0, y = 0;
     ctx.fillStyle = 'rgba(6,14,26,.75)'; ctx.strokeStyle = 'rgba(242,196,109,.7)'; ctx.lineWidth = 1;
     ctx.font = `13px ${FONT}`; ctx.textAlign = 'center'; const w = ctx.measureText(label).width + 14;
     ctx.fillRect(x - w / 2, y - 14, w, 20); ctx.strokeRect(x - w / 2, y - 14, w, 20);
     ctx.fillStyle = '#f2c46d'; ctx.fillText(label, x, y + 1);
+    ctx.restore();
   };
   const lore = LORE.find(l => Math.abs((l.x + 0.5) * TILE - pcx) < 40 && Math.abs((l.gy - 0.5) * TILE - pcy) < 50);
   if (lore && logOpen) return;
@@ -2148,7 +2171,9 @@ function wrapText(text, x, y, maxW, lh) {
 }
 function drawLog() {
   // Slim, see-through strip along the bottom edge (usually rock and floor), sized to fit the text.
-  const l = logOpen, w = 760, x = (VW - w) / 2, pad = 16, lh = 18, maxW = w - pad * 2;
+  const u = uiScale, vw = VW / u, vh = VH / u;
+  ctx.save(); ctx.scale(u, u);
+  const l = logOpen, w = Math.min(760, vw - 20), x = (vw - w) / 2, pad = 16, lh = 18, maxW = w - pad * 2;
   ctx.font = `14px ${FONT}`;
   const lines = [];
   for (const para of l.text.split('\n')) {
@@ -2157,7 +2182,7 @@ function drawLog() {
     lines.push(line); lines.push(null);   // null = paragraph gap
   }
   lines.pop();
-  const bodyH = lines.reduce((h, ln) => h + (ln === null ? 6 : lh), 0), h = pad + 20 + bodyH + pad - 4, y = VH - h - 10;
+  const bodyH = lines.reduce((h, ln) => h + (ln === null ? 6 : lh), 0), h = pad + 20 + bodyH + pad - 4, y = vh - h - 10;
   ctx.fillStyle = 'rgba(5,11,22,.62)'; ctx.fillRect(x, y, w, h);
   ctx.strokeStyle = 'rgba(242,196,109,.35)'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
   ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.9)'; ctx.shadowBlur = 4;
@@ -2166,6 +2191,7 @@ function drawLog() {
   ctx.textAlign = 'left'; ctx.fillStyle = '#e3d8bd'; ctx.font = `14px ${FONT}`;
   let ty = y + pad + 32;
   for (const ln of lines) { if (ln === null) { ty += 6; continue; } ctx.fillText(ln, x + pad, ty); ty += lh; }
+  ctx.restore();
   ctx.restore();
 }
 const CONTROLS = [
@@ -2205,10 +2231,14 @@ function drawTitle() {
 function drawVersion() { ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(159,182,192,.6)'; ctx.font = `13px ${FONT}`; ctx.fillText('v' + VERSION, VW - 14, VH - 14); }
 function drawPause() {
   ctx.fillStyle = 'rgba(1,3,8,.6)'; ctx.fillRect(0, 0, VW, VH);
-  panel(VW / 2 - 260, 90, 520, 340);
-  ctx.textAlign = 'center'; ctx.fillStyle = '#f2c46d'; ctx.font = `bold 28px ${FONT}`; ctx.fillText('Paused', VW / 2, 134);
-  drawControls(VW / 2, 180);
-  ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(233,220,184,.6)'; ctx.font = `italic 14px ${FONT}`; ctx.fillText('Esc / P to resume', VW / 2, 410);
+  ctx.save(); ctx.translate(VW / 2, VH / 2); ctx.scale(uiScale, uiScale); ctx.translate(-VW / 2, -VH / 2);
+  const touch = touchEl.classList.contains('on'), rows = touch ? 5 : CONTROLS.length - 1, ph = 150 + rows * 24, top = (VH - ph) / 2;
+  panel(VW / 2 - 260, top, 520, ph);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#f2c46d'; ctx.font = `bold 28px ${FONT}`; ctx.fillText('Paused', VW / 2, top + 44);
+  drawControls(VW / 2, top + 90);
+  ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(233,220,184,.6)'; ctx.font = `italic 14px ${FONT}`;
+  ctx.fillText(touch ? 'Tap to resume' : 'Esc / P to resume', VW / 2, top + ph - 22);
+  ctx.restore();
   drawVersion();
 }
 function drawHeart(c, x, y, k) {
@@ -2349,10 +2379,12 @@ function buildTune() {
     const show = () => { val.textContent = (+T[d.k]).toFixed(d.s < 0.01 ? 3 : d.s < 1 ? 2 : 0); };
     inp.addEventListener('input', () => { T[d.k] = +inp.value; show(); saveTune(); });
     show(); inputs[d.k] = { inp, show };
+    inp.addEventListener("change", () => inp.blur());   // hand the keys back to the game after a drag
     lab.append(row, inp); tuneBody.appendChild(lab);
   }
 }
 function toggleTune() { tuneEl.hidden = !tuneEl.hidden; }
+document.getElementById('tClose').onclick = () => toggleTune();
 document.getElementById('tReset').onclick = () => { for (const d of TDEF) if (d.k) { T[d.k] = d.v; inputs[d.k].inp.value = d.v; inputs[d.k].show(); } saveTune(); };
 document.getElementById('tCopy').onclick = () => {
   const s = JSON.stringify(T, null, 2);
@@ -2363,18 +2395,19 @@ buildTune();
 /* =====================================================================
    Sizing & main loop
    ===================================================================== */
-let renderScale = 1;
+let renderScale = 1, lightScale = 0.5, uiScale = 1;   // uiScale enlarges HUD and text on small screens   // light layers are soft gradients: half resolution looks the same at a quarter of the cost
 function resize() {
   const s = Math.min(innerWidth / VW, innerHeight / VH), dpr = Math.min(window.devicePixelRatio || 1, 2);
   renderScale = Math.max(0.5, s * dpr);
   canvas.width = Math.round(VW * renderScale); canvas.height = Math.round(VH * renderScale);
   canvas.style.width = Math.round(VW * s) + 'px'; canvas.style.height = Math.round(VH * s) + 'px';
-  dark.width = beamCv.width = canvas.width; dark.height = beamCv.height = canvas.height;
+  lightScale = renderScale * 0.5; uiScale = clamp(0.95 / s, 1, 1.6);
+  dark.width = beamCv.width = Math.ceil(canvas.width / 2); dark.height = beamCv.height = Math.ceil(canvas.height / 2);
 }
 addEventListener('resize', resize); resize();
 document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') state = 'pause'; });
 
-let last = performance.now(), acc = 0;
+let last = performance.now(), acc = 0, touchIdle = null;
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
   pollPad();
@@ -2382,6 +2415,8 @@ function frame(now) {
   while (acc >= STEP) { tick(STEP); acc -= STEP; }
   if (state !== 'title' && state !== 'edit') updateCam(dt);
   shake = Math.max(0, shake - dt * 45);
+  const idle = state !== 'play' || !!logOpen;      // menus and logs: hide the on-screen controls
+  if (idle !== touchIdle) { touchIdle = idle; touchEl.classList.toggle('idle', idle); }
   render();
   requestAnimationFrame(frame);
 }
