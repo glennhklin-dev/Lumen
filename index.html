@@ -38,6 +38,28 @@
   #tune input[type=range]{width:100%;margin:2px 0 0}
   #tune .btns{display:flex;gap:6px;margin-top:10px}
   #tune button{flex:1;background:#13283a;color:#e9dcb8;border:1px solid #2f5268;border-radius:5px;padding:6px;font:12px system-ui;cursor:pointer}
+  #ed{position:fixed;top:8px;left:8px;width:236px;max-height:calc(100% - 16px);overflow:auto;box-sizing:border-box;-webkit-user-select:text;user-select:text;
+      background:rgba(6,14,26,.95);border:1px solid #2c4a5c;border-radius:8px;color:#d9e6ea;font:12px/1.35 system-ui,sans-serif;padding:10px;z-index:6}
+  #ed[hidden]{display:none}
+  #ed h3{margin:0 0 4px;font:600 15px Georgia,serif;color:#f2c46d}
+  #ed .sub{color:#7d93a0;font-size:11px;margin-bottom:6px}
+  #ed .g{margin:10px 0 4px;color:#6fd6d0;font-weight:600;text-transform:uppercase;letter-spacing:.06em;font-size:11px}
+  #ed .tools{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+  #ed button{background:#13283a;color:#e9dcb8;border:1px solid #2f5268;border-radius:5px;padding:5px 6px;font:12px system-ui;cursor:pointer;text-align:left;display:flex;align-items:center;gap:6px}
+  #ed button:hover{border-color:#4f7d96}
+  #ed button.on{background:#2b4a33;border-color:#7fc28a;color:#fff}
+  #ed .sw{width:12px;height:12px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.25)}
+  #ed .k{margin-left:auto;color:#7d93a0;font-size:10px}
+  #ed .acts{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+  #ed .acts button{justify-content:center}
+  #ed label{display:flex;justify-content:space-between;align-items:center;gap:6px;margin:4px 0}
+  #ed input,#ed select,#ed textarea{background:#0b1a28;color:#e9dcb8;border:1px solid #2f5268;border-radius:4px;font:12px system-ui;padding:3px 4px}
+  #ed input[type=number]{width:64px}
+  #ed textarea{width:100%;box-sizing:border-box;height:90px;resize:vertical}
+  #ed .full{display:block}
+  #ed .msg{margin-top:8px;color:#f2c46d;min-height:16px}
+  #ed .help{margin-top:8px;color:#7d93a0;font-size:11px}
+  #ed .opts:empty{display:none}
 </style>
 </head>
 <body>
@@ -51,6 +73,24 @@
   <div class="tb big" data-a="jump"  style="right:150px;bottom:18px">Jump</div>
   <div class="tb" data-a="interact"  style="right:160px;bottom:90px">E</div>
   <div class="tb" data-a="pause"     style="right:12px;top:10px;width:36px;height:36px">II</div>
+</div>
+
+<div id="ed" hidden>
+  <h3>Map editor</h3>
+  <div class="sub">M or Enter to play · saved in this browser</div>
+  <div class="g">Tiles</div><div class="tools" id="edTiles"></div>
+  <div class="g">Objects</div><div class="tools" id="edObjs"></div>
+  <div class="g" id="edOptsH">Options</div><div class="opts" id="edOpts"></div>
+  <div class="g">Map</div>
+  <div class="acts">
+    <button id="edPlay">▶ Play from start</button><button id="edCheck">Check paths</button>
+    <button id="edUndo">Undo</button><button id="edRedo">Redo</button>
+    <button id="edExport">Export file</button><button id="edImport">Import file</button>
+    <button id="edCopy">Copy JSON</button><button id="edRevert">Official map</button>
+  </div>
+  <input type="file" id="edFile" accept=".json,application/json" hidden>
+  <div class="msg" id="edMsg"></div>
+  <div class="help">Left-click: paint / place · Shift-drag: fill a rectangle · Right-drag or Space-drag: pan · WASD / arrows: pan · Wheel: zoom · F: play from cursor · Select tool: click to edit, drag to move, Delete to remove · Ctrl+Z / Ctrl+Y</div>
 </div>
 
 <div id="tune" hidden>
@@ -163,7 +203,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.17.0';
+const VERSION = '0.18.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -192,7 +232,7 @@ const take = a => { if (pressed[a]) { pressed[a] = false; return true; } return 
 const clearPressed = () => { for (const a in pressed) pressed[a] = false; };
 
 addEventListener('keydown', e => {
-  if (e.target && e.target.tagName === 'INPUT') return;
+  if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
   const a = codeTo[e.code]; if (!a) return;
   e.preventDefault();
   if (!e.repeat) pressed[a] = true;
@@ -271,7 +311,7 @@ function pollPad() {
    ===================================================================== */
 const W = 200, H = 60;
 let grid, DOOR = null;
-function buildLevel() {
+function buildOfficialGrid() {
   grid = []; for (let y = 0; y < H; y++) grid.push(new Array(W).fill('#'));
   const R = (x0, y0, x1, y1, c) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) grid[y][x] = c; };
   // ---- Driftwood Shore ----
@@ -306,12 +346,40 @@ function buildLevel() {
   R(160, 25, 181, 31, '.'); R(182, 29, 183, 31, '.');                               // gallery + doorway to the tower
   R(160, 32, 175, 32, '.'); R(160, 33, 175, 35, '~');                               // flooded trench
   R(165, 21, 169, 23, '.'); R(166, 24, 168, 24, 'G');                               // sealed niche in the ceiling
-  for (const t of TANK_DEF) R(t.x, t.y, t.x + t.w - 1, t.y + t.h - 1, 'w');
   // ---- Lamp Tower (x184-197, rows 4-55) ----
   R(184, 4, 197, 55, '.');
   const cols = { L: [185, 188], M: [189, 192], R: [193, 196] }, pat = ['M', 'R', 'M', 'L'];
   for (let i = 0, row = 53; row >= 8; i++, row -= 3) { const [a, b] = cols[pat[i % 4]]; R(a, row, b, row, '#'); }
   R(168, 3, 183, 7, '.');                                                           // summit chamber (floor row 8)
+  return grid;
+}
+/* =====================================================================
+   Maps as data. The official map is built above; a map made in the editor (M) is saved in
+   this browser and played instead. Format: rows of tile characters + entity lists.
+   ===================================================================== */
+const MAP_KEY = 'lumen.map.v1';
+const clone = o => JSON.parse(JSON.stringify(o));
+function officialMap() {
+  return clone({
+    v: 1, rows: buildOfficialGrid().map(r => r.join('')), spawn: { x: 3, gy: 40 },
+    beacons: BEACON_DEF, lamps: LAMP_DEF, pools: POOL_DEF, enemies: ENEMY_DEF, lore: LORE, upgrades: UPG_DEF,
+    tanks: TANK_DEF, mirrors: MIRROR_DEF, src: SRC, cry: CRY,
+  });
+}
+let OFFICIAL = null, customActive = false;                       // captured once at start-up, before any custom map loads
+function customMap() { try { const m = JSON.parse(localStorage.getItem(MAP_KEY) || 'null'); return m && m.v === 1 && Array.isArray(m.rows) ? m : null; } catch (e) { return null; } }
+function currentMap() { return customMap() || OFFICIAL; }
+function loadMap(m) {
+  grid = [];
+  for (let y = 0; y < H; y++) { const row = (m.rows[y] || '').padEnd(W, '#').slice(0, W).split(''); grid.push(row.map(c => '#.~=GD'.includes(c) ? c : c === 'w' ? '.' : '#')); }
+  for (let x = 0; x < W; x++) { grid[0][x] = grid[H - 1][x] = '#'; }
+  for (let y = 0; y < H; y++) { grid[y][0] = grid[y][W - 1] = '#'; }
+  SPAWN = { x: m.spawn.x * TILE + 7, y: m.spawn.gy * TILE - 28 };
+  BEACON_DEF = clone(m.beacons || []); LAMP_DEF = clone(m.lamps || []); POOL_DEF = clone(m.pools || []);
+  ENEMY_DEF = clone(m.enemies || []); LORE = clone(m.lore || []); UPG_DEF = clone(m.upgrades || []);
+  TANK_DEF = clone(m.tanks || []); MIRROR_DEF = clone(m.mirrors || []);
+  SRC = m.src ? { ...m.src } : { x: -5, y: -5 }; CRY = m.cry ? { ...m.cry } : { x: -5, y: -5 };
+  for (const t of TANK_DEF) for (let y = t.y; y < t.y + t.h; y++) for (let x = t.x; x < t.x + t.w; x++) if (grid[y] && x > 0 && x < W - 1) grid[y][x] = 'w';
   // door bounds
   DOOR = null;
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (grid[y][x] === 'D') {
@@ -324,7 +392,7 @@ const isSolid = (x, y) => { const c = tileAt(x, y); return c === '#' || c === 'D
 const blocksLight = (x, y) => { const c = tileAt(x, y); return c === '#' || c === 'D' || c === 'G'; };
 /* Water glass: tanks bend the lantern's light. A prism tank turns it toward its base; a lens bowl
    gathers it to a focal point. Darkglass ('G') shrugs off diffuse light but shatters under a focus. */
-const TANK_DEF = [
+let TANK_DEF = [
   { x: 103, y: 54, w: 2, h: 2, kind: 'lens', f: 115, axis: [1, 0] },
   { x: 166, y: 26, w: 3, h: 2, kind: 'lens', f: 90, axis: [0, 1] },
   { x: 176, y: 30, w: 1, h: 2, kind: 'prism', base: [0, -1], bend: 30 },
@@ -348,8 +416,8 @@ const hiddenLit = (x, y) => { for (const h of hidden) if (h.x === x && h.y === y
 const isPlatform = (x, y) => tileAt(x, y) === '=' && hiddenLit(x, y);
 const floorBelow = (x, y) => { while (y < H && !isSolid(x, y)) y++; return y; };
 
-const SPAWN = { x: 3 * TILE + 7, y: 40 * TILE - 28 };
-const LORE = [
+let SPAWN = { x: 3 * TILE + 7, y: 40 * TILE - 28 };
+let LORE = [
   { x: 10, gy: 40, title: "Keeper's Log I — The First Light",
     text: "The Pharos of Alexandria, finished around 280 BCE, was one of the Seven Wonders of the Ancient World. It is thought to have stood over 100 metres tall, with a fire burning at its top to guide ships into harbour.\nThe dark here is older than any fire. Keep yours lit." },
   { x: 26, gy: 40, title: "Keeper's Log II — Wickies",
@@ -371,11 +439,11 @@ const LORE = [
   { x: 178, gy: 8, title: "Keeper's Log X — The Last Keepers",
     text: "Lamps once burned whale oil, then lard oil, then kerosene, before electricity took over. Today almost every lighthouse is automated, and the keepers are gone.\nThis one still needs you." },
 ];
-const MIRROR_DEF = [{ x: 100, y: 33, d: '/' }, { x: 100, y: 37, d: '/' }, { x: 108, y: 37, d: '\\' }];
-const SRC = { x: 93, y: 33 }, CRY = { x: 108, y: 30 };
-const BEACON_DEF = [{ x: 6, gy: 40 }, { x: 48, gy: 40 }, { x: 88, gy: 40 }, { x: 121, gy: 40 }, { x: 132, gy: 56 }, { x: 172, gy: 8, final: true }];
+let MIRROR_DEF = [{ x: 100, y: 33, d: '/' }, { x: 100, y: 37, d: '/' }, { x: 108, y: 37, d: '\\' }];
+let SRC = { x: 93, y: 33 }, CRY = { x: 108, y: 30 };
+let BEACON_DEF = [{ x: 6, gy: 40 }, { x: 48, gy: 40 }, { x: 88, gy: 40 }, { x: 121, gy: 40 }, { x: 132, gy: 56 }, { x: 172, gy: 8, final: true }];
 // Enemies: ground types stand on floor row y; wings hover around row y; drips hang from the ceiling at row y.
-const ENEMY_DEF = [
+let ENEMY_DEF = [
   { t: 'murk', x: 25, y: 40 }, { t: 'murk', x: 61, y: 40 }, { t: 'murk', x: 66, y: 40 }, { t: 'murk', x: 104, y: 40 }, { t: 'murk', x: 113, y: 40, elite: true },
   { t: 'drip', x: 69, y: 26 },
   { t: 'murk', x: 66, y: 18 }, { t: 'shell', x: 52, y: 18 }, { t: 'wing', x: 42, y: 9 }, { t: 'wing', x: 75, y: 7 },
@@ -383,9 +451,9 @@ const ENEMY_DEF = [
   { t: 'wing', x: 120, y: 49 }, { t: 'wing', x: 166, y: 50, elite: true }, { t: 'drip', x: 145, y: 46 }, { t: 'drip', x: 166, y: 46 },
   { t: 'wing', x: 191, y: 25, elite: true }, { t: 'wing', x: 189, y: 13, elite: true },
 ];
-const LAMP_DEF = [{ x: 13, gy: 40 }, { x: 59, gy: 40 }, { x: 110, gy: 40 }, { x: 45, gy: 18 }, { x: 165, gy: 56 }, { x: 186, gy: 32 }];
+let LAMP_DEF = [{ x: 13, gy: 40 }, { x: 59, gy: 40 }, { x: 110, gy: 40 }, { x: 45, gy: 18 }, { x: 165, gy: 56 }, { x: 186, gy: 32 }];
 const lampFY = l => l.gy * TILE - 46, lampZY = l => l.gy * TILE - 18;
-const UPG_DEF = [
+let UPG_DEF = [
   { x: 86, gy: 9, kind: 'fuel', amt: 25, name: 'Oil Flask' },
   { x: 95, gy: 56, kind: 'fuel', amt: 25, name: 'Deep Oil Flask' },
   { x: 167, gy: 24, kind: 'mask', amt: 1, name: 'Glass Heart', sealed: true },   // rests on the ceiling seal; drifts down when freed
@@ -443,7 +511,7 @@ function resetEnemies() {
 
 /* Murk pools: dark spots that breed Murklings, limited by a global mob cap and a per-pool cap.
    Burning a pool with the beam destroys it and frees the embers inside; its spawn drop none. */
-const POOL_DEF = [{ x: 24, gy: 40 }, { x: 64, gy: 40 }, { x: 106, gy: 40 }, { x: 68, gy: 18 }, { x: 116, gy: 56 }, { x: 145, gy: 56 }];
+let POOL_DEF = [{ x: 24, gy: 40 }, { x: 64, gy: 40 }, { x: 106, gy: 40 }, { x: 68, gy: 18 }, { x: 116, gy: 56 }, { x: 145, gy: 56 }];
 let pools = [], seenPool = false;
 let seeps = [];   // pending spawns rising out of dark ground
 /* Far-away spawned Murklings fade out so the mob cap goes to ones that can actually reach you.
@@ -606,7 +674,7 @@ function drawPoolEyes() {
   }
 }
 function newGame() {
-  buildLevel();
+  loadMap(currentMap());
   hidden = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (grid[y][x] === '=') hidden.push({ x, y, a: 0, lit: false });
   upgrades = { got: new Set(), fuel: 0, masks: 0 };
@@ -1291,6 +1359,7 @@ function traceBeam() {
    ===================================================================== */
 function tick(dt) {
   if (take('tune')) toggleTune();
+  if (state === 'edit') { clearPressed(); return; }
   if (state === 'title') { if (take('start') || take('jump') || take('flash')) { newGame(); state = 'play'; fade = 1; clearPressed(); } return; }
   if (state === 'end') { stateT += dt; if (stateT > 1 && (take('start') || take('jump'))) { state = 'title'; clearPressed(); } return; }
   if (state === 'pause') { if (take('pause') || take('start')) { state = 'play'; clearPressed(); } return; }
@@ -1804,6 +1873,7 @@ function collectLights() {
 function render() {
   const rs = renderScale;
   ctx.setTransform(rs, 0, 0, rs, 0, 0);
+  if (state === 'edit') { drawEditor(); return; }
   if (state === 'title') { drawTitle(); return; }
 
   const sx = (Math.random() * 2 - 1) * shake, sy = (Math.random() * 2 - 1) * shake;
@@ -2101,11 +2171,14 @@ function drawLog() {
 const CONTROLS = [
   ['Move', '← →  /  A D'], ['Aim up / down', '↑ ↓  /  W S'], ['Jump (hold = higher)', 'Space / Z / K'],
   ['Lantern beam (hold)', 'X / J   — aim with ↑ ↓ ← →'], ['Read / turn mirror', 'E / C'],
-  ['Pause', 'Esc / P'], ['Feel tuning panel', 'T'], ['Touch', 'left stick move · right stick aim & hold light'],
+  ['Pause', 'Esc / P'], ['Feel tuning panel', 'T'], ['Map editor', 'M'], ['Touch', 'left stick move · right stick aim & hold light'],
 ];
 function drawControls(x, y) {
   ctx.font = `15px ${FONT}`;
-  for (const [a, k] of CONTROLS) { ctx.textAlign = 'right'; ctx.fillStyle = '#9fb6c0'; ctx.fillText(a, x - 12, y); ctx.textAlign = 'left'; ctx.fillStyle = '#e9dcb8'; ctx.fillText(k, x + 12, y); y += 24; }
+  const touch = touchEl.classList.contains('on');   // show only the active scheme
+  const list = touch ? [['Move', 'left stick'], ['Aim & hold the beam', 'right stick'], ['Jump', 'Jump button'], ['Read / turn mirror', 'E button'], ['Pause', 'II button']]
+    : CONTROLS.filter(([a]) => a !== 'Touch');
+  for (const [a, k] of list) { ctx.textAlign = 'right'; ctx.fillStyle = '#9fb6c0'; ctx.fillText(a, x - 12, y); ctx.textAlign = 'left'; ctx.fillStyle = '#e9dcb8'; ctx.fillText(k, x + 12, y); y += 24; }
 }
 function drawTitle() {
   time += 1 / 60;
@@ -2126,6 +2199,7 @@ function drawTitle() {
   drawControls(VW / 2, 270);
   const a = 0.55 + 0.45 * Math.sin(time * 3);
   ctx.textAlign = 'center'; ctx.fillStyle = `rgba(242,196,109,${a})`; ctx.font = `18px ${FONT}`; ctx.fillText('Press Enter, Jump, or tap to begin', VW / 2, 488);
+  ctx.fillStyle = 'rgba(159,182,192,.6)'; ctx.font = `13px ${FONT}`; ctx.fillText(customActive ? 'Playing your custom map  ·  M to edit' : 'M  map editor', VW / 2, 514);
   drawVersion();
 }
 function drawVersion() { ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(159,182,192,.6)'; ctx.font = `13px ${FONT}`; ctx.fillText('v' + VERSION, VW - 14, VH - 14); }
@@ -2306,7 +2380,7 @@ function frame(now) {
   pollPad();
   acc += dt;
   while (acc >= STEP) { tick(STEP); acc -= STEP; }
-  if (state !== 'title') updateCam(dt);
+  if (state !== 'title' && state !== 'edit') updateCam(dt);
   shake = Math.max(0, shake - dt * 45);
   render();
   requestAnimationFrame(frame);
@@ -2314,7 +2388,358 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Small hook for automated testing / debugging in the console.
-window.__lumen = { tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get logOpen() { return logOpen; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, hidden: () => hidden, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
+/* =====================================================================
+   Map editor (M). Desktop only: paint tiles, place objects, check paths,
+   play-test, export/import. The working map autosaves to this browser.
+   ===================================================================== */
+const ED_TILES = [
+  { ch: '#', label: 'Rock', key: '1', col: '#3a5872' }, { ch: '.', label: 'Air', key: '2', col: '#0b1622' },
+  { ch: '~', label: 'Water', key: '3', col: '#1d8a90' }, { ch: '=', label: 'Hidden walk', key: '4', col: '#c9973f' },
+  { ch: 'G', label: 'Darkglass', key: '5', col: '#6a4cb0' }, { ch: 'D', label: 'Crystal door', key: '6', col: '#8a6a3c' },
+];
+const ED_OBJS = [
+  { id: 'select', label: 'Select / move', key: 'V', col: '#e9dcb8' }, { id: 'erase', label: 'Erase object', key: 'X', col: '#d06a5a' },
+  { id: 'spawn', label: 'Start point', col: '#7fd18a' }, { id: 'beacons', label: 'Beacon', col: '#f0a24a' },
+  { id: 'lamps', label: 'Wick-lamp', col: '#ffd27a' }, { id: 'pools', label: 'Murk pool', col: '#8a5ad0' },
+  { id: 'enemies', label: 'Enemy', col: '#c77ad8' }, { id: 'lore', label: 'Lore stone', col: '#6fd6d0' },
+  { id: 'upgrades', label: 'Upgrade', col: '#f2b347' }, { id: 'tanks', label: 'Water tank', col: '#7fd8e6' },
+  { id: 'mirrors', label: 'Mirror', col: '#bfeff0' }, { id: 'src', label: 'Light source', col: '#ffe08a' },
+  { id: 'cry', label: 'Crystal', col: '#8ad8ff' },
+];
+const ED_TEMPL = {
+  beacons: { final: false }, lamps: {}, pools: {}, enemies: { t: 'murk', elite: false },
+  lore: { title: "Keeper's Log", text: 'Write the stone\'s words here.' },
+  upgrades: { kind: 'fuel', amt: 25, name: 'Oil Flask' },
+  tanks: { kind: 'lens', w: 2, h: 2, f: 110, axis: [1, 0], base: [0, -1], bend: 45 }, mirrors: { d: '/' },
+};
+// Editable fields per object kind
+const VEC = { right: [1, 0], left: [-1, 0], up: [0, -1], down: [0, 1] };
+const vecName = v => Object.keys(VEC).find(k => VEC[k][0] === v[0] && VEC[k][1] === v[1]) || 'up';
+const ED_FIELDS = {
+  beacons: [{ k: 'final', l: 'Final beacon (ending)', type: 'check' }],
+  enemies: [{ k: 't', l: 'Type', type: 'select', opts: [['murk', 'Murkling'], ['shell', 'Shellback'], ['wing', 'Gloomwing'], ['drip', 'Dripper']] },
+            { k: 'elite', l: 'Harder variant', type: 'check' }],
+  lore: [{ k: 'title', l: 'Title', type: 'text' }, { k: 'text', l: 'Text', type: 'area' }],
+  upgrades: [{ k: 'kind', l: 'Kind', type: 'select', opts: [['fuel', 'Oil (fuel)'], ['mask', 'Mask (health)']] },
+             { k: 'amt', l: 'Amount', type: 'num' }, { k: 'name', l: 'Name', type: 'text' }, { k: 'sealed', l: 'Sealed in darkglass', type: 'check' }],
+  tanks: [{ k: 'kind', l: 'Kind', type: 'select', opts: [['lens', 'Lens bowl'], ['prism', 'Prism']] },
+          { k: 'w', l: 'Width', type: 'num' }, { k: 'h', l: 'Height', type: 'num' },
+          { k: 'axis', l: 'Lens axis', type: 'select', opts: [['h', 'Horizontal'], ['v', 'Vertical']], get: o => (o.axis || [1, 0])[0] ? 'h' : 'v', set: (o, v) => { o.axis = v === 'h' ? [1, 0] : [0, 1]; } },
+          { k: 'f', l: 'Lens focus (px)', type: 'num' },
+          { k: 'base', l: 'Prism bends toward', type: 'select', opts: [['up', 'Up'], ['down', 'Down'], ['left', 'Left'], ['right', 'Right']], get: o => vecName(o.base || [0, -1]), set: (o, v) => { o.base = VEC[v].slice(); } },
+          { k: 'bend', l: 'Prism bend (deg)', type: 'num' }],
+  mirrors: [{ k: 'd', l: 'Angle', type: 'select', opts: [['/', '/'], ['\\', '\\']] }],
+};
+const ed = { map: null, grid: null, tool: '#', zoom: 0.5, cx: 0, cy: 0, hover: null, drag: null, sel: null, undo: [], redo: [], check: null, space: false, saveT: 0 };
+const edEl = document.getElementById('ed'), edMsg = document.getElementById('edMsg'), edOpts = document.getElementById('edOpts');
+const edSay = (t, warn) => { edMsg.textContent = t; edMsg.style.color = warn ? '#ff9a7a' : '#f2c46d'; };
+const edSolid = c => c === '#' || c === 'G' || c === 'D';
+function edSnapshot() { ed.map.rows = ed.grid.map(r => r.join('')); return JSON.stringify(ed.map); }
+function edPush() { ed.undo.push(edSnapshot()); if (ed.undo.length > 80) ed.undo.shift(); ed.redo = []; ed.check = null; }
+function edRestore(json) { ed.map = JSON.parse(json); ed.grid = ed.map.rows.map(r => r.split('')); ed.sel = null; ed.check = null; edBuildOpts(); edAutosave(); }
+function edAutosave() { clearTimeout(ed.saveT); ed.saveT = setTimeout(() => { try { localStorage.setItem(MAP_KEY, edSnapshot()); customActive = true; } catch (e) { edSay('Could not save in this browser.', true); } }, 300); }
+function edSaveNow() { clearTimeout(ed.saveT); try { localStorage.setItem(MAP_KEY, edSnapshot()); customActive = true; } catch (e) {} }
+function edLoad(m) {
+  const map = clone(m);
+  for (const k of ['beacons', 'lamps', 'pools', 'enemies', 'lore', 'upgrades', 'tanks', 'mirrors']) map[k] = map[k] || [];
+  map.rows = Array.from({ length: H }, (_, y) => (map.rows[y] || '').padEnd(W, '#').slice(0, W).replace(/w/g, '.'));
+  map.spawn = map.spawn || { x: 3, gy: 40 };
+  ed.map = map; ed.grid = map.rows.map(r => r.split('')); ed.sel = null; ed.check = null;
+}
+// ---------- open / close
+function enterEditor() {
+  if (!ed.map) edLoad(currentMap());
+  const fx = state === 'title' || !P ? ed.map.spawn.x * TILE : P.x, fy = state === 'title' || !P ? ed.map.spawn.gy * TILE : P.y;
+  ed.cx = fx - VW / 2 / ed.zoom; ed.cy = fy - VH / 2 / ed.zoom;
+  state = 'edit'; edEl.hidden = false; canvas.style.cursor = 'crosshair'; edBuildOpts();
+  edSay(customMap() ? 'Editing your map.' : 'Editing a copy of the official map.');
+}
+function exitEditor(atCursor) {
+  edSaveNow(); edEl.hidden = true; canvas.style.cursor = '';
+  newGame(); state = 'play'; fade = 1; clearPressed();
+  if (atCursor && ed.hover) {
+    const { x, y } = ed.hover; let gy = y; while (gy < H - 1 && !isSolid(x, gy)) gy++;
+    P.x = x * TILE + 7; P.y = gy * TILE - P.h; P.lastSafe = { x: P.x, y: P.y }; checkpoint = { x: P.x, y: P.y }; snapCam();
+  }
+}
+// ---------- objects: where they sit and how to hit them
+function edBoxes() {
+  const out = [], m = ed.map, push = (list, i, o, x, y, w = 1, h = 1) => out.push({ list, i, o, x, y, w, h });
+  push('spawn', -1, m.spawn, m.spawn.x, m.spawn.gy - 1);
+  for (const k of ['beacons', 'lamps', 'pools', 'lore', 'upgrades']) m[k].forEach((o, i) => push(k, i, o, o.x, o.gy - 1));
+  m.enemies.forEach((o, i) => push('enemies', i, o, o.x, o.t === 'murk' || o.t === 'shell' ? o.y - 1 : o.y));
+  m.tanks.forEach((o, i) => push('tanks', i, o, o.x, o.y, o.w, o.h));
+  m.mirrors.forEach((o, i) => push('mirrors', i, o, o.x, o.y));
+  if (m.src) push('src', -1, m.src, m.src.x, m.src.y);
+  if (m.cry) push('cry', -1, m.cry, m.cry.x, m.cry.y);
+  return out;
+}
+function edPick(tx, ty) {
+  let best = null, bd = 1.3;
+  for (const b of edBoxes()) {
+    const dx = Math.max(b.x - tx, 0, tx - (b.x + b.w - 1)), dy = Math.max(b.y - ty, 0, ty - (b.y + b.h - 1)), d = Math.hypot(dx, dy);
+    if (d < bd) { bd = d; best = b; }
+  }
+  return best;
+}
+const edFloor = (x, y) => { while (y < H - 1 && !edSolid(ed.grid[y][x])) y++; return y; };
+const edCeil = (x, y) => { while (y > 1 && !edSolid(ed.grid[y - 1][x])) y--; return y; };
+function edPlaceAt(o, list, tx, ty) {          // set an object's position from a clicked tile
+  if (list === 'enemies') { o.x = tx; o.y = o.t === 'wing' ? ty : o.t === 'drip' ? edCeil(tx, ty) : edFloor(tx, ty); }
+  else if (list === 'tanks' || list === 'mirrors' || list === 'src' || list === 'cry') { o.x = tx; o.y = ty; }
+  else { o.x = tx; o.gy = edFloor(tx, ty); if (list === 'upgrades' && ed.grid[o.gy] && ed.grid[o.gy][tx] === 'G') o.sealed = true; }
+}
+function edPlace(tx, ty) {
+  const t = ed.tool, m = ed.map;
+  if (ed.grid[ty][tx] !== '.' && ed.grid[ty][tx] !== '=' && t !== 'tanks') { edSay('Place objects in open space (air).', true); return; }
+  edPush();
+  if (t === 'spawn') { edPlaceAt(m.spawn, 'spawn', tx, ty); }
+  else if (t === 'src' || t === 'cry') { m[t] = m[t] || {}; edPlaceAt(m[t], t, tx, ty); }
+  else { const o = clone(ED_TEMPL[t]); edPlaceAt(o, t, tx, ty); m[t].push(o); ed.sel = { list: t, i: m[t].length - 1 }; edBuildOpts(); }
+  edAutosave();
+}
+function edDelete(b) {
+  if (!b) return;
+  if (b.list === 'spawn') { edSay('The map needs a start point; move it instead.', true); return; }
+  edPush();
+  if (b.list === 'src' || b.list === 'cry') ed.map[b.list] = null; else ed.map[b.list].splice(b.i, 1);
+  ed.sel = null; edBuildOpts(); edAutosave();
+}
+// ---------- tiles
+function edPaint(tx, ty) { if (tx > 0 && ty > 0 && tx < W - 1 && ty < H - 1) ed.grid[ty][tx] = ed.tool; }
+function edLine(a, b) { const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y), 1); for (let i = 0; i <= n; i++) edPaint(Math.round(a.x + (b.x - a.x) * i / n), Math.round(a.y + (b.y - a.y) * i / n)); }
+// ---------- path check (same jump rules the game uses: ~3 tiles up, ~4 across)
+function edReach() {
+  const tank = new Set(); for (const t of ed.map.tanks) for (let y = t.y; y < t.y + t.h; y++) for (let x = t.x; x < t.x + t.w; x++) tank.add(y * W + x);
+  const g = ed.grid, tc = (x, y) => x < 0 || y < 0 || x >= W || y >= H ? '#' : tank.has(y * W + x) ? 'w' : g[y][x];
+  const solid = (x, y) => { const c = tc(x, y); return c === '#' || c === 'G' || c === 'w'; };
+  const plat = (x, y) => solid(x, y) || tc(x, y) === '=', open = (x, y) => !solid(x, y) && tc(x, y) !== '~';
+  const stand = (x, y) => open(x, y) && tc(x, y) !== '=' && plat(x, y + 1) && tc(x, y + 1) !== '~';
+  const land = (x, y) => { while (y < H - 1) { if (!open(x, y)) return -1; if (stand(x, y)) return y * W + x; if (tc(x, y + 1) === '~') return -1; y++; } return -1; };
+  const nb = (x, y) => {
+    const out = new Set(), add = k => { if (k >= 0) out.add(k); };
+    for (const dx of [-1, 1]) if (open(x + dx, y)) {
+      if (stand(x + dx, y)) add(y * W + x + dx);
+      else for (let d = 0; d < 4; d++) { let ok = true; for (let k = 1; k <= 1 + d; k++) if (!open(x + dx * k, y)) { ok = false; break; } if (!ok) break; add(land(x + dx * (1 + d), y)); }
+    }
+    for (let up = 0; up < 4; up++) {
+      let ok = true; for (let k = 0; k <= up; k++) if (!open(x, y - k)) { ok = false; break; } if (!ok) break;
+      const ty = y - up;
+      for (const dx of [-1, 1]) for (let d = 1; d <= 4; d++) { if (!open(x + dx * d, ty)) break; const tx = x + dx * d; if (stand(tx, ty)) add(ty * W + tx); add(land(tx, ty)); }
+      if (up > 0 && stand(x, ty)) add(ty * W + x);
+    }
+    return out;
+  };
+  const cells = [], adj = new Map(), radj = new Map();
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) if (stand(x, y)) { const k = y * W + x; cells.push(k); radj.set(k, []); }
+  for (const k of cells) adj.set(k, [...nb(k % W, Math.floor(k / W))]);
+  for (const [k, ns] of adj) for (const n of ns) if (radj.has(n)) radj.get(n).push(k);
+  const sp = ed.map.spawn, start = land(sp.x, sp.gy - 1);
+  const bfs = A => { const seen = new Set(start >= 0 ? [start] : []), q = [...seen]; while (q.length) { const c = q.pop(); for (const n of A.get(c) || []) if (!seen.has(n)) { seen.add(n); q.push(n); } } return seen; };
+  const fwd = bfs(adj), back = bfs(radj), oneway = [], unreach = [];
+  for (const k of cells) { if (!fwd.has(k)) unreach.push(k); else if (!back.has(k)) oneway.push(k); }
+  ed.check = { oneway, unreach };
+  if (start < 0) edSay('The start point is not on solid ground.', true);
+  else if (!oneway.length && !unreach.length) edSay('✓ Every spot you can stand on is reachable and has a way back.');
+  else edSay(`${oneway.length} one-way spots (orange: no way back) · ${unreach.length} unreachable (red; rooms behind darkglass show here too).`, !!oneway.length);
+}
+// ---------- panel
+function edButton(parent, label, col, key, on, click) {
+  const b = document.createElement('button');
+  b.innerHTML = `<span class="sw" style="background:${col}"></span>${label}${key ? `<span class="k">${key}</span>` : ''}`;
+  if (on) b.className = 'on'; b.onclick = click; parent.appendChild(b); return b;
+}
+function edBuildTools() {
+  const t = document.getElementById('edTiles'), o = document.getElementById('edObjs'); t.innerHTML = ''; o.innerHTML = '';
+  for (const d of ED_TILES) edButton(t, d.label, d.col, d.key, ed.tool === d.ch, () => { ed.tool = d.ch; ed.sel = null; edBuildTools(); edBuildOpts(); });
+  for (const d of ED_OBJS) edButton(o, d.label, d.col, d.key, ed.tool === d.id, () => { ed.tool = d.id; if (d.id !== 'select') ed.sel = null; edBuildTools(); edBuildOpts(); });
+}
+function edSelObj() { if (!ed.sel) return null; const { list, i } = ed.sel; return list === 'spawn' || list === 'src' || list === 'cry' ? ed.map[list] : ed.map[list][i]; }
+function edBuildOpts() {
+  edBuildTools();
+  const sel = edSelObj(), kind = sel ? ed.sel.list : ED_TEMPL[ed.tool] ? ed.tool : null, obj = sel || (kind ? ED_TEMPL[kind] : null);
+  document.getElementById('edOptsH').textContent = sel ? 'Selected ' + (ED_OBJS.find(d => d.id === kind) || { label: kind }).label.toLowerCase() : kind ? 'New ' + ED_OBJS.find(d => d.id === kind).label.toLowerCase() : 'Options';
+  edOpts.innerHTML = '';
+  document.getElementById('edOptsH').style.display = obj || sel ? '' : 'none';
+  if (!obj || !ED_FIELDS[kind]) { if (sel) { const b = document.createElement('button'); b.textContent = 'Delete'; b.onclick = () => edDelete({ list: ed.sel.list, i: ed.sel.i }); edOpts.appendChild(b); } return; }
+  for (const f of ED_FIELDS[kind]) {
+    if (kind === 'tanks' && ((obj.kind === 'lens' && (f.k === 'base' || f.k === 'bend')) || (obj.kind === 'prism' && (f.k === 'axis' || f.k === 'f')))) continue;
+    if (kind === 'enemies' && f.k === 'elite' && obj.t === 'drip') continue;
+    const lab = document.createElement('label'); if (f.type === 'area') lab.className = 'full';
+    lab.append(f.l + (f.type === 'area' ? '' : ' '));
+    let inp;
+    if (f.type === 'select') { inp = document.createElement('select'); for (const [v, t] of f.opts) { const op = document.createElement('option'); op.value = v; op.textContent = t; inp.appendChild(op); } inp.value = f.get ? f.get(obj) : obj[f.k]; }
+    else if (f.type === 'check') { inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = !!obj[f.k]; }
+    else if (f.type === 'area') { inp = document.createElement('textarea'); inp.value = obj[f.k] || ''; }
+    else { inp = document.createElement('input'); inp.type = f.type === 'num' ? 'number' : 'text'; inp.value = obj[f.k] ?? ''; }
+    const apply = () => {
+      if (sel) edPush();
+      const v = f.type === 'check' ? inp.checked : f.type === 'num' ? Math.max(f.k === 'w' || f.k === 'h' ? 1 : 0, +inp.value || 0) : inp.value;
+      if (f.set) f.set(obj, v); else obj[f.k] = v;
+      if (sel) edAutosave();
+      if (f.type === 'select' || f.type === 'check') edBuildOpts();
+    };
+    inp.addEventListener(f.type === 'text' || f.type === 'area' || f.type === 'num' ? 'change' : 'input', apply);
+    lab.appendChild(inp); edOpts.appendChild(lab);
+  }
+  if (sel) { const b = document.createElement('button'); b.textContent = 'Delete'; b.style.marginTop = '6px'; b.onclick = () => edDelete({ list: ed.sel.list, i: ed.sel.i }); edOpts.appendChild(b); }
+}
+document.getElementById('edPlay').onclick = () => exitEditor(false);
+document.getElementById('edCheck').onclick = () => edReach();
+document.getElementById('edUndo').onclick = () => edUndo();
+document.getElementById('edRedo').onclick = () => edRedo();
+function edUndo() { if (!ed.undo.length) return edSay('Nothing to undo.'); ed.redo.push(edSnapshot()); edRestore(ed.undo.pop()); }
+function edRedo() { if (!ed.redo.length) return edSay('Nothing to redo.'); ed.undo.push(edSnapshot()); edRestore(ed.redo.pop()); }
+document.getElementById('edExport').onclick = () => {
+  const blob = new Blob([edSnapshot()], { type: 'application/json' }), a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'lumen-map.json'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  edSay('Exported lumen-map.json.');
+};
+document.getElementById('edImport').onclick = () => document.getElementById('edFile').click();
+document.getElementById('edFile').onchange = e => {
+  const file = e.target.files[0]; if (!file) return;
+  file.text().then(t => { const m = JSON.parse(t); if (!m || m.v !== 1 || !Array.isArray(m.rows)) throw new Error('bad'); edPush(); edLoad(m); edBuildOpts(); edAutosave(); edSay('Imported ' + file.name + '.'); })
+    .catch(() => edSay('That file is not a Lumen map.', true));
+  e.target.value = '';
+};
+document.getElementById('edCopy').onclick = () => {
+  const s = edSnapshot(); (navigator.clipboard ? navigator.clipboard.writeText(s) : Promise.reject()).then(() => edSay('Map JSON copied.')).catch(() => prompt('Copy map JSON:', s));
+};
+document.getElementById('edRevert').onclick = () => {
+  if (!confirm('Replace your map with the official one? (Undo can bring yours back while the editor is open.)')) return;
+  edPush(); edLoad(OFFICIAL); try { localStorage.removeItem(MAP_KEY); customActive = false; } catch (e) {} edBuildOpts(); edSay('Back to the official map.');
+};
+// ---------- mouse
+const edMouse = e => { const r = canvas.getBoundingClientRect(), sx = (e.clientX - r.left) / r.width * VW, sy = (e.clientY - r.top) / r.height * VH; return { sx, sy, x: clamp(Math.floor((ed.cx + sx / ed.zoom) / TILE), 0, W - 1), y: clamp(Math.floor((ed.cy + sy / ed.zoom) / TILE), 0, H - 1) }; };
+canvas.addEventListener('contextmenu', e => { if (state === 'edit') e.preventDefault(); });
+canvas.addEventListener('mousedown', e => {
+  if (state !== 'edit') return;
+  e.preventDefault(); const m = edMouse(e);
+  if (e.button === 2 || e.button === 1 || (e.button === 0 && ed.space)) { ed.drag = { pan: true, sx: m.sx, sy: m.sy, cx: ed.cx, cy: ed.cy }; return; }
+  if (e.button !== 0) return;
+  const tileTool = ED_TILES.some(d => d.ch === ed.tool);
+  if (tileTool) {
+    edPush();
+    if (e.shiftKey) ed.drag = { rect: true, a: { x: m.x, y: m.y }, b: { x: m.x, y: m.y } };
+    else { edPaint(m.x, m.y); ed.drag = { paint: true, last: { x: m.x, y: m.y } }; }
+  } else if (ed.tool === 'select') {
+    const b = edPick(m.x, m.y); ed.sel = b ? { list: b.list, i: b.i } : null; edBuildOpts();
+    if (b) ed.drag = { move: true, moved: false };
+  } else if (ed.tool === 'erase') edDelete(edPick(m.x, m.y));
+  else edPlace(m.x, m.y);
+});
+addEventListener('mousemove', e => {
+  if (state !== 'edit') return;
+  const m = edMouse(e); ed.hover = { x: m.x, y: m.y };
+  const d = ed.drag; if (!d) return;
+  if (d.pan) { ed.cx = d.cx - (m.sx - d.sx) / ed.zoom; ed.cy = d.cy - (m.sy - d.sy) / ed.zoom; }
+  else if (d.paint) { edLine(d.last, m); d.last = { x: m.x, y: m.y }; }
+  else if (d.rect) d.b = { x: m.x, y: m.y };
+  else if (d.move && ed.sel) { if (!d.moved) { edPush(); d.moved = true; } edPlaceAt(edSelObj(), ed.sel.list, m.x, m.y); }
+});
+addEventListener('mouseup', () => {
+  if (state !== 'edit' || !ed.drag) return;
+  const d = ed.drag; ed.drag = null;
+  if (d.rect) for (let y = Math.min(d.a.y, d.b.y); y <= Math.max(d.a.y, d.b.y); y++) for (let x = Math.min(d.a.x, d.b.x); x <= Math.max(d.a.x, d.b.x); x++) edPaint(x, y);
+  if (d.paint || d.rect || d.moved) { edAutosave(); if (d.moved) edBuildOpts(); }
+});
+canvas.addEventListener('wheel', e => {
+  if (state !== 'edit') return;
+  e.preventDefault(); const m = edMouse(e), wx = ed.cx + m.sx / ed.zoom, wy = ed.cy + m.sy / ed.zoom;
+  ed.zoom = clamp(ed.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.12, 2);
+  ed.cx = wx - m.sx / ed.zoom; ed.cy = wy - m.sy / ed.zoom;
+}, { passive: false });
+// ---------- keys
+const edKeys = {};
+addEventListener('keydown', e => {
+  if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if (e.code === 'KeyM' && !e.repeat && (state === 'title' || state === 'play' || state === 'pause')) { e.preventDefault(); enterEditor(); return; }
+  if (state !== 'edit') return;
+  e.preventDefault(); edKeys[e.code] = true;
+  if (e.repeat) return;
+  if (e.code === 'KeyM' || e.code === 'Enter') return exitEditor(false);
+  if (e.code === 'KeyF') return exitEditor(true);
+  if (e.code === 'Space') ed.space = true;
+  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') return e.shiftKey ? edRedo() : edUndo();
+  if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') return edRedo();
+  if (e.code === 'Delete' || e.code === 'Backspace') return edDelete(ed.sel && { list: ed.sel.list, i: ed.sel.i });
+  const tile = ED_TILES.find(d => 'Digit' + d.key === e.code); if (tile) { ed.tool = tile.ch; ed.sel = null; edBuildOpts(); }
+  if (e.code === 'KeyV') { ed.tool = 'select'; edBuildOpts(); }
+  if (e.code === 'KeyX') { ed.tool = 'erase'; ed.sel = null; edBuildOpts(); }
+  if (e.code === 'KeyC') edReach();
+});
+addEventListener('keyup', e => { edKeys[e.code] = false; if (e.code === 'Space') ed.space = false; });
+// ---------- drawing
+function edIcon(b, sx, sy, ts) {
+  const o = b.o, s = Math.max(ts, 9), cx = sx + ts * b.w / 2, cy = sy + ts * b.h / 2;
+  const disc = (col, letter, ring) => {
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx, cy, s * 0.42, 0, 7); ctx.fill();
+    if (ring) { ctx.strokeStyle = ring; ctx.lineWidth = 2; ctx.stroke(); }
+    if (s >= 12) { ctx.fillStyle = '#08121c'; ctx.font = `bold ${Math.round(s * 0.5)}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(letter, cx, cy + 1); ctx.textBaseline = 'alphabetic'; }
+  };
+  const L = b.list;
+  if (L === 'spawn') disc('#7fd18a', 'S');
+  else if (L === 'beacons') disc('#f0a24a', o.final ? '★' : 'B');
+  else if (L === 'lamps') disc('#ffd27a', 'L');
+  else if (L === 'pools') { ctx.fillStyle = '#8a5ad0'; ctx.beginPath(); ctx.ellipse(cx, sy + ts * 0.85, s * 0.6, s * 0.25, 0, 0, 7); ctx.fill(); }
+  else if (L === 'lore') disc('#6fd6d0', 'i');
+  else if (L === 'upgrades') disc(o.kind === 'mask' ? '#a8dcff' : '#f2b347', o.kind === 'mask' ? '♥' : '+', o.sealed ? '#b48cff' : null);
+  else if (L === 'enemies') disc({ murk: '#9a6ad8', shell: '#8b93a8', wing: '#7a7ae0', drip: '#5ab0c0' }[o.t], { murk: 'm', shell: 's', wing: 'w', drip: 'd' }[o.t], o.elite ? '#ff7ac8' : null);
+  else if (L === 'tanks') {
+    ctx.fillStyle = 'rgba(80,190,210,.35)'; ctx.fillRect(sx, sy, ts * o.w, ts * o.h);
+    ctx.strokeStyle = '#9fe6f0'; ctx.lineWidth = 1.5; ctx.strokeRect(sx + 1, sy + 1, ts * o.w - 2, ts * o.h - 2);
+    if (o.kind === 'lens') { ctx.beginPath(); ctx.ellipse(cx, cy, ts * o.w / 2 - 3, ts * o.h / 2 - 3, 0, 0, 7); ctx.stroke(); }
+    else { const v = o.base || [0, -1]; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + v[0] * ts * o.w / 2, cy + v[1] * ts * o.h / 2); ctx.stroke(); }
+  }
+  else if (L === 'mirrors') { ctx.strokeStyle = '#bfeff0'; ctx.lineWidth = 3; ctx.beginPath(); if (o.d === '/') { ctx.moveTo(sx + 2, sy + ts - 2); ctx.lineTo(sx + ts - 2, sy + 2); } else { ctx.moveTo(sx + 2, sy + 2); ctx.lineTo(sx + ts - 2, sy + ts - 2); } ctx.stroke(); }
+  else if (L === 'src') disc('#ffe08a', '☼');
+  else if (L === 'cry') disc('#8ad8ff', '◆');
+}
+function drawEditor() {
+  const z = ed.zoom, ts = TILE * z;
+  // pan with keys
+  const pan = 600 / z / 60;
+  if (edKeys.KeyA || edKeys.ArrowLeft) ed.cx -= pan; if (edKeys.KeyD || edKeys.ArrowRight) ed.cx += pan;
+  if (edKeys.KeyW || edKeys.ArrowUp) ed.cy -= pan; if (edKeys.KeyS || edKeys.ArrowDown) ed.cy += pan;
+  ctx.fillStyle = '#04080e'; ctx.fillRect(0, 0, VW, VH);
+  const x0 = Math.max(0, Math.floor(ed.cx / TILE)), y0 = Math.max(0, Math.floor(ed.cy / TILE));
+  const x1 = Math.min(W - 1, Math.ceil((ed.cx + VW / z) / TILE)), y1 = Math.min(H - 1, Math.ceil((ed.cy + VH / z) / TILE));
+  const SX = x => (x * TILE - ed.cx) * z, SY = y => (y * TILE - ed.cy) * z;
+  const col = { '#': '#2b4258', '.': '#0b1622', '~': '#1a7c84', '=': '#0b1622', 'G': '#4e3888', 'D': '#7a5a34' };
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const c = ed.grid[y][x]; ctx.fillStyle = col[c] || '#2b4258'; ctx.fillRect(SX(x), SY(y), ts + 0.6, ts + 0.6);
+    if (c === '#' && y > 0 && ed.grid[y - 1][x] !== '#' && ed.grid[y - 1][x] !== 'D') { ctx.fillStyle = '#4f8f86'; ctx.fillRect(SX(x), SY(y), ts + 0.6, Math.max(1, ts * 0.12)); }
+    if (c === '=') { ctx.strokeStyle = '#c9973f'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]); ctx.strokeRect(SX(x) + 1, SY(y) + 1, ts - 2, ts * 0.35); ctx.setLineDash([]); }
+  }
+  if (ts >= 14) {
+    ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 1; ctx.beginPath();
+    for (let x = x0; x <= x1 + 1; x++) { ctx.moveTo(SX(x), SY(y0)); ctx.lineTo(SX(x), SY(y1 + 1)); }
+    for (let y = y0; y <= y1 + 1; y++) { ctx.moveTo(SX(x0), SY(y)); ctx.lineTo(SX(x1 + 1), SY(y)); }
+    ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(242,196,109,.5)'; ctx.lineWidth = 2; ctx.strokeRect(SX(0), SY(0), W * ts, H * ts);
+  if (ed.check) {
+    for (const [arr, c] of [[ed.check.unreach, 'rgba(230,70,60,.5)'], [ed.check.oneway, 'rgba(255,160,40,.65)']]) {
+      ctx.fillStyle = c; for (const k of arr) { const x = k % W, y = Math.floor(k / W); ctx.fillRect(SX(x), SY(y) + ts * 0.55, ts, ts * 0.45); }
+    }
+  }
+  for (const b of edBoxes()) {
+    if (b.x + b.w < x0 - 1 || b.x > x1 + 1 || b.y + b.h < y0 - 1 || b.y > y1 + 1) continue;
+    edIcon(b, SX(b.x), SY(b.y), ts);
+    if (ed.sel && ed.sel.list === b.list && ed.sel.i === b.i) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.strokeRect(SX(b.x) - 3, SY(b.y) - 3, ts * b.w + 6, ts * b.h + 6); ctx.setLineDash([]); }
+  }
+  const d = ed.drag;
+  if (d && d.rect) { const ax = Math.min(d.a.x, d.b.x), ay = Math.min(d.a.y, d.b.y); ctx.strokeStyle = '#f2c46d'; ctx.lineWidth = 2; ctx.strokeRect(SX(ax), SY(ay), (Math.abs(d.b.x - d.a.x) + 1) * ts, (Math.abs(d.b.y - d.a.y) + 1) * ts); }
+  else if (ed.hover) { ctx.strokeStyle = 'rgba(242,196,109,.9)'; ctx.lineWidth = 1.5; ctx.strokeRect(SX(ed.hover.x), SY(ed.hover.y), ts, ts); }
+  // status bar
+  const toolName = (ED_TILES.find(t => t.ch === ed.tool) || ED_OBJS.find(t => t.id === ed.tool) || {}).label;
+  ctx.fillStyle = 'rgba(4,10,18,.85)'; ctx.fillRect(0, VH - 26, VW, 26);
+  ctx.fillStyle = '#d9e6ea'; ctx.font = '12px system-ui'; ctx.textAlign = 'right';
+  ctx.fillText(`${toolName}   ·   tile ${ed.hover ? ed.hover.x + ', ' + ed.hover.y : '-'}   ·   zoom ${Math.round(z * 100)}%   ·   M play   F play here`, VW - 12, VH - 9);
+}
+OFFICIAL = officialMap();
+customActive = !!customMap();
+window.__lumen = { ed, enterEditor, exitEditor, edReach, tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get logOpen() { return logOpen; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, hidden: () => hidden, seeps: () => seeps, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
 })();
 </script>
 </body>
