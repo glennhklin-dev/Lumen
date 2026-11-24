@@ -138,6 +138,7 @@ const TDEF = [
   {k:'fuelDrain',    v:32,   min:5,   max:100,  s:1,    l:'Fuel drain (/s)'},
   {k:'fuelRegen',    v:18,   min:2,   max:80,   s:1,    l:'Fuel regen (/s)'},
   {k:'regenDelay',   v:0.7,  min:0,   max:3,    s:0.05, l:'Regen delay after use (s)'},
+  {k:'warmRegen',    v:3,    min:1,   max:10,   s:0.25, l:'Regen near a lit lamp / beacon (×)'},
   {k:'igniteCost',   v:4,    min:0,   max:30,   s:1,    l:'Ignition cost'},
   {k:'burnoutRelight',v:35,  min:0,   max:100,  s:1,    l:'Fuel needed after burnout'},
   {k:'killHitstop',  v:0.08, min:0,   max:0.3,  s:0.005,l:'Hit-stop on kill (s)'},
@@ -205,7 +206,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.20.0';
+const VERSION = '0.21.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -975,6 +976,24 @@ function rotateMirror(m) {
   burst((m.x + 0.5) * TILE, (m.y + 0.5) * TILE, 8, { color: '#bfeff0', smin: 40, smax: 140, add: true, lmin: 0.2, lmax: 0.4 });
 }
 
+// A burning wick-lamp's warmth or a lit beacon refills the lantern faster; warm sparks drift into it.
+function warmSource(p) {
+  const pcx = p.x + p.w / 2, pcy = p.y + p.h / 2, l = warmAt(pcx, pcy);
+  if (l) return { x: (l.x + 0.5) * TILE, y: lampFY(l) + 2 };
+  for (const b of beacons) if (b.lit && Math.abs((b.x + 0.5) * TILE - pcx) < 100 && Math.abs((b.gy - 1) * TILE - pcy) < 90) return { x: (b.x + 0.5) * TILE, y: b.gy * TILE - 40 };
+  return null;
+}
+function regenFuel(p, dt) {
+  const src = warmSource(p);
+  if (src) p.regenT = Math.min(p.regenT, 0.15);
+  p.regenT -= dt;
+  if (p.regenT > 0 || p.fuel >= p.maxFuel) return;
+  p.fuel = Math.min(p.maxFuel, p.fuel + T.fuelRegen * (src ? T.warmRegen : 1) * dt);
+  if (src && p._lx && Math.random() < dt * 14) {
+    const sx = src.x + rnd(-8, 8), sy = src.y + rnd(-6, 6), dx = p._lx - sx, dy = p._ly - sy, d = Math.hypot(dx, dy) || 1, sp = rnd(90, 140);
+    particles.push({ x: sx, y: sy, vx: dx / d * sp, vy: dy / d * sp, life: d / sp, max: d / sp, size: rnd(1, 1.8), color: '#ffc27a', g: 0, add: true, drag: 0 });
+  }
+}
 function tickPlayer(dt) {
   const p = P;
   p.anim += dt;
@@ -1016,10 +1035,7 @@ function tickPlayer(dt) {
       const o = beamOrigin(p); burst(o.x, o.y, 14, { color: '#7a6a55', g: -40, smin: 20, smax: 80, lmin: 0.4, lmax: 0.9 });
       if (!seenBurnout) { seenBurnout = true; toast('Your lantern gutters. Let the flame breathe.', 2.4); }
     }
-  } else {
-    p.regenT -= dt;
-    if (p.regenT <= 0) p.fuel = Math.min(p.maxFuel, p.fuel + T.fuelRegen * dt);
-  }
+  } else regenFuel(p, dt);
   p.prevTouchAim = touchAim;
   if (p.burnout && p.fuel >= T.burnoutRelight) p.burnout = false;
   if (p.burnout && isHeld('flash') && Math.random() < dt * 12) { const o = beamOrigin(p); burst(o.x, o.y, 1, { color: '#a08060', g: -30, smin: 10, smax: 40, lmin: 0.3, lmax: 0.6 }); }
@@ -1135,7 +1151,7 @@ function aiWalker(e, dt, dx, dy) {
     e.wind -= dt;
     if (e.wind <= 0) {
       if (e.feint) { e.vx = -e.dir * 170; e.vy = -200; e.tac = 'back'; e.tt = rnd(0.4, 0.8); e.lungeCD = rnd(0.5, 1); }
-      else if (!e.elite) { e.vx = e.dir * 300; e.vy = -260; e.lungeCD = 1.3; }                       // plain Murkling: the same honest lunge
+      else if (!e.elite) { e.vx = e.dir * 300; e.vy = -260; e.lungeCD = rnd(2, 3.5); }                       // plain Murkling: the same honest lunge
       else { e.vx = e.dir * rnd(260, 340); e.vy = -rnd(200, 300); e.lungeCD = rnd(0.9, 1.6); e.tac = Math.random() < 0.5 ? 'back' : 'circle'; e.tt = rnd(0.5, 1.1); }
     }
   } else if (e.spitT > 0) {            // swelling up to spit: a tell
@@ -1186,7 +1202,8 @@ function aiWalker(e, dt, dx, dy) {
         else if (e.tac === 'hop') { if (e.grounded) { e.vy = -rnd(360, 470); e.vx = toward * rnd(110, 190); } e.tac = 'press'; }
         else if (e.tac === 'spit') { if (e.spitCD <= 0 && e.grounded) e.spitT = 0.45; e.tac = 'circle'; }
         if (murk && e.tac === 'press' && e.grounded && e.lungeCD <= 0 && Math.abs(dx) < (e.elite ? 70 + 40 * e.agg : 90)) {
-          e.dir = toward; e.wind = e.elite ? rnd(0.3, 0.5) : 0.38; e.feint = e.elite && Math.random() < 0.25;
+          if (!e.elite && Math.random() > 0.2) e.lungeCD = rnd(1.8, 3.2);       // the slug mostly just keeps crawling
+          else { e.dir = toward; e.wind = e.elite ? rnd(0.3, 0.5) : 0.38; e.feint = e.elite && Math.random() < 0.25; }
         }
       }
     } else {
@@ -1398,7 +1415,7 @@ function tick(dt) {
   // Reading a Keeper's Log holds you and the Murk still; the world itself keeps breathing.
   if (logOpen) {
     P.beamOn = false; P.vx = 0; P.rays = null; P.spotLen = null;
-    P.regenT -= dt; if (P.regenT <= 0) P.fuel = Math.min(P.maxFuel, P.fuel + T.fuelRegen * dt);   // the flame still breathes
+    regenFuel(P, dt);   // the flame still breathes
     if (P.burnout && P.fuel >= T.burnoutRelight) P.burnout = false;
     if (take('interact') || take('jump') || take('flash') || take('start')) { logOpen = null; clearPressed(); }
   } else tickPlayer(dt);
@@ -1865,7 +1882,19 @@ function healthFlame(c, x, y, s) {
   else { c.strokeStyle = 'rgba(160,160,170,.4)'; c.lineWidth = 1; c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(-2, -4, 0, -7); c.quadraticCurveTo(2, -9, 0, -12); c.stroke(); }
   c.restore();
 }
-return { drawMurkling, drawShellback, drawGloomwing, drawDripper, murkSlug, healthFlame };
+function drawEmbers(c, x, y, s) {
+  const n = s.n || 3, t = s.time || 0;
+  c.strokeStyle = '#6b5434'; c.lineWidth = 1; c.beginPath(); c.moveTo(x, y - 6); c.lineTo(x - 2, y - 6); c.lineTo(x - 2, y + 6); c.lineTo(x, y + 6);
+  const ex = x + 8 + (n - 1) * 11 + 8; c.moveTo(ex, y - 6); c.lineTo(ex + 2, y - 6); c.lineTo(ex + 2, y + 6); c.lineTo(ex, y + 6); c.stroke();
+  for (let i = 0; i < n; i++) {
+    const cx = x + 8 + i * 11, on = i < (s.have || 0);
+    if (on) softGlow(c, cx, y, 8, `rgba(255,140,50,${0.45 + 0.15 * Math.sin(t * 5 + i)})`);
+    c.beginPath(); c.moveTo(cx, y - 4.5); c.lineTo(cx + 3.5, y); c.lineTo(cx, y + 4.5); c.lineTo(cx - 3.5, y); c.closePath();
+    if (on) { c.fillStyle = '#ffcf8a'; c.fill(); c.fillStyle = '#fff3d8'; c.beginPath(); c.arc(cx - 0.5, y - 1, 1, 0, TAU); c.fill(); }
+    else { c.fillStyle = '#1c140e'; c.fill(); c.strokeStyle = '#7a5a36'; c.lineWidth = 1; c.stroke(); }
+  }
+}
+return { drawMurkling, drawShellback, drawGloomwing, drawDripper, murkSlug, healthFlame, drawEmbers };
 })();
 function drawEnemy(e) {
   const pass = 'body'; const st = { t: e.t, dir: e.dir, flash: e.flash, wind: e.wind, spitT: e.spitT, elite: e.elite, state: e.state, vx: e.vx, vy: e.vy, grounded: e.grounded, charge: e.charge, chargeWind: e.chargeWind, time, pass };
@@ -2277,13 +2306,8 @@ function drawHUD() {
   ctx.fillStyle = p.burnout ? (Math.floor(time * 4) % 2 ? '#7a3b22' : '#5a2c1a') : p.beamOn ? '#ffd27a' : '#f2b347';
   ctx.fillRect(x + 2, y + 2, (w - 4) * f, h - 4);
   if (p.burnout) { ctx.fillStyle = '#e9dcb8'; ctx.fillRect(x + 2 + (w - 4) * T.burnoutRelight / p.maxFuel - 1, y - 2, 2, h + 4); }
-  // Embers toward the next mask
-  for (let i = 0; i < T.embersPerMask; i++) {
-    const ex = x + w + 14 + i * 13, ey = y + 5;
-    if (i < p.embers) { ctx.globalCompositeOperation = 'lighter'; glow(ex, ey, 9, 'rgba(255,140,50,.6)'); ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = '#ffd9a0'; }
-    else ctx.fillStyle = '#3d3226';
-    ctx.beginPath(); ctx.arc(ex, ey, 3, 0, 7); ctx.fill();
-  }
+  // Embers toward the next wick: coals in a brass bracket
+  DS.drawEmbers(ctx, x + w + 14, y + 5, { n: T.embersPerMask, have: p.embers, time });
 }
 function panel(x, y, w, h) {
   ctx.fillStyle = 'rgba(5,11,22,.92)'; ctx.fillRect(x, y, w, h);
