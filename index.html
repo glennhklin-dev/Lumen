@@ -165,6 +165,8 @@ const TDEF = [
   {k:'glassCrackTime',v:1.2, min:0.2, max:5,    s:0.1,  l:'Focused time to shatter darkglass (s)'},
   {g:'Darkness spawning (like night in Minecraft)'},
   {k:'darkCap',      v:2,    min:0,   max:10,   s:1,    l:'Max alive from darkness'},
+  {k:'areaCap',      v:3,    min:1,   max:12,   s:1,    l:'Max enemies near a spawn spot'},
+  {k:'areaRadius',   v:300,  min:60,  max:1000, s:10,   l:'…counted within (px)'},
   {k:'darkInterval', v:14,   min:0.5, max:30,   s:0.5,  l:'Seconds between dark spawns'},
   {k:'darkMinDist',  v:220,  min:80,  max:600,  s:10,   l:'Spawn no closer than (px)'},
   {k:'darkMaxDist',  v:560,  min:200, max:1200, s:20,   l:'Spawn no farther than (px)'},
@@ -206,7 +208,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.21.0';
+const VERSION = '0.22.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -539,6 +541,14 @@ function makeRoom() {
   if (far) { far.dead = true; far.despawned = true; return true; }
   return false;
 }
+// Local crowding limit: nothing new rises where enough enemies already are.
+function crowdedAt(x, y) {
+  let n = seeps.filter(sp => Math.hypot(sp.x - x, sp.y - y) < T.areaRadius).length + pools.filter(pl => pl.tele > 0 && Math.hypot(poolCx(pl) - x, pl.gy * TILE - y) < T.areaRadius).length;
+  for (const e of enemies) if (!e.dead && Math.hypot(e.x + e.w / 2 - x, e.y + e.h / 2 - y) < T.areaRadius) n++;
+  return n >= T.areaCap;
+}
+// Spawned Murk heads for the player, so the player's surroundings count too.
+const spawnBlocked = (x, y) => crowdedAt(x, y) || crowdedAt(P.x + P.w / 2, P.y + P.h / 2);
 function resetPools() { seeps = []; darkT = 3; pools = POOL_DEF.map(d => ({ x: d.x, gy: d.gy, t: rnd(2, T.spawnInterval), tele: 0, burn: 0, dead: false })); }
 const poolCx = pl => (pl.x + 0.5) * TILE;
 function tickPools(dt) {
@@ -578,8 +588,8 @@ function tickPools(dt) {
     const d = Math.hypot(pcx - cx, pcy - (gy - 10));
     const mine = enemies.filter(e => !e.dead && e.pool === pl).length;
     const warmed = lamps.some(l => l.lit && l.charges > 0 && Math.abs((l.x + 0.5) * TILE - cx) < T.lampRadius + 20);
-    if (pending >= T.mobCap && mine < T.poolCap && d > T.spawnMinDist && d < T.spawnMaxDist && makeRoom()) pending--;
-    if (pending < T.mobCap && mine < T.poolCap && d > T.spawnMinDist && d < T.spawnMaxDist && !warmed && P.hazard <= 0) {
+    if (pending >= T.mobCap && mine < T.poolCap && d > T.spawnMinDist && d < T.spawnMaxDist && !spawnBlocked(cx, gy - 10) && makeRoom()) pending--;
+    if (pending < T.mobCap && mine < T.poolCap && d > T.spawnMinDist && d < T.spawnMaxDist && !warmed && P.hazard <= 0 && !spawnBlocked(cx, gy - 10)) {
       pl.tele = T.spawnTelegraph; pending++;
       pl.t = T.spawnInterval * rnd(0.8, 1.25);
     } else pl.t = 0.8;                                   // conditions not met: check again shortly
@@ -613,7 +623,7 @@ function findDarkGround() {
     for (let d = 0; d <= 7; d++) for (const ty of d ? [pty - d, pty + d] : [pty]) {
       if (tileAt(tx, ty) !== '.' || tileAt(tx, ty - 1) !== '.' || tileAt(tx, ty + 1) !== '#') continue;
       const x = (tx + 0.5) * TILE, y = (ty + 1) * TILE;
-      if (isLitArea(x, y - 12)) continue;
+      if (isLitArea(x, y - 12) || spawnBlocked(x, y - 12)) continue;
       if (pools.some(pl => !pl.dead && Math.abs(poolCx(pl) - x) < 48 && y === pl.gy * TILE)) continue;
       return { x, y };
     }
