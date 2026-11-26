@@ -205,7 +205,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.24.1';
+const VERSION = '0.25.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -290,7 +290,7 @@ makeStick('aimZone', 'aimStick', () => ({ x: innerWidth - 80, y: innerHeight - 7
   (dx, dy, d) => { touchAim = d > AIM_DZ ? Math.atan2(dy, dx) : null; },
   () => { vHeld.flash = false; touchAim = null; },
   () => { vHeld.flash = true; pressed.flash = true; touchAim = null; });
-canvas.addEventListener('pointerdown', () => { if (state === 'title' || state === 'end' || state === 'reveal') pressed.start = true; else if (logOpen) pressed.interact = true; });
+canvas.addEventListener('pointerdown', () => { if (state === 'title' || state === 'reveal') pressed.start = true; else if (logOpen) pressed.interact = true; });
 
 function pollPad() {
   const gps = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -588,7 +588,7 @@ function tickRespawns(dt) {
 
 /* Murk pools: dark spots that breed Murklings, limited by a global mob cap and a per-pool cap.
    Burning a pool with the beam destroys it and frees the embers inside; its spawn drop none. */
-let POOL_DEF = [{ x: 24, gy: 40 }, { x: 64, gy: 40 }, { x: 106, gy: 40 }, { x: 68, gy: 18 }, { x: 116, gy: 56 }, { x: 145, gy: 56 }];
+let POOL_DEF = [{ x: 24, gy: 40 }, { x: 64, gy: 40 }, { x: 106, gy: 40 }, { x: 68, gy: 18 }, { x: 116, gy: 56 }, { x: 147, gy: 56 }];
 let pools = [], seenPool = false;
 /* Far-away spawned Murklings fade out so the mob cap goes to ones that can actually reach you.
    Placed enemies (level design) never despawn; they only count toward the cap when near. */
@@ -1538,7 +1538,6 @@ function tick(dt) {
   if (take('tune')) toggleTune();
   if (state === 'edit') { clearPressed(); return; }
   if (state === 'title') { if (take('start') || take('jump') || take('flash')) { newGame(); state = 'play'; fade = 1; clearPressed(); } return; }
-  if (state === 'end') { stateT += dt; if (stateT > 1 && (take('start') || take('jump'))) { state = 'title'; clearPressed(); } return; }
   if (state === 'pause') { if (take('pause') || take('start')) { state = 'play'; clearPressed(); } return; }
   if (state === 'reveal') {
     stateT += dt; tickParticles(dt);
@@ -1603,8 +1602,7 @@ function tick(dt) {
       if (!b.lit) {
         b.lit = true; addShake(4);
         burst(bx, (b.gy - 1) * TILE + 6, 30, { color: '#f6d27a', add: true, smin: 60, smax: 260, ang: -Math.PI / 2, spread: 1.2, g: 80 });
-        toast(b.final ? 'The Focus Lens rests in the flame.' : (beacons.indexOf(b) === 0 ? 'Beacon lit. You will return here if your light fails.' : 'Beacon lit.'));
-        if (b.final) { state = 'end'; stateT = -1.4; toasts = []; }
+        toast(b.final ? 'The tower beacon blazes. The coast beyond is still dark.' : (beacons.indexOf(b) === 0 ? 'Beacon lit. You will return here if your light fails.' : 'Beacon lit.'));
       } else if (P.masks < P.maxMasks) toast('You rest by the flame.', 1.6);
       checkpoint = { x: bx - P.w / 2, y: b.gy * TILE - P.h };
       P.masks = P.maxMasks;
@@ -2420,7 +2418,7 @@ function render() {
   ctx.restore();
 
   drawSpores();
-  if (state !== 'end') {
+  {
     ctx.save(); ctx.scale(uiScale, uiScale); drawHUD(); ctx.restore();
     ctx.save(); ctx.translate(VW / 2, 0); ctx.scale(uiScale, uiScale);
     for (let i = 0; i < toasts.length; i++) {
@@ -2447,7 +2445,6 @@ function render() {
   if (logOpen && state === 'play') drawLog();
   if (state === 'pause') drawPause();
   if (state === 'reveal') drawReveal();
-  if (state === 'end' && stateT > 0) drawEnd();
 }
 function forVisibleTiles(fn) {
   const x0 = Math.max(0, Math.floor(cam.x / TILE) - 1), x1 = Math.min(W - 1, Math.ceil((cam.x + VW) / TILE) + 1);
@@ -2780,20 +2777,6 @@ function drawReveal() {
   if (t > 2.2) { ctx.globalAlpha = 0.55 + 0.45 * Math.sin(time * 3); ctx.fillStyle = '#f2c46d'; ctx.font = `italic 14px ${FONT}`; ctx.fillText('Press Jump, E, or tap to continue', cx, 480); }
   ctx.globalAlpha = 1;
 }
-function drawEnd() {
-  const a = clamp(stateT / 1.2, 0, 1);
-  ctx.fillStyle = `rgba(1,3,8,${0.85 * a})`; ctx.fillRect(0, 0, VW, VH);
-  ctx.globalAlpha = a; ctx.textAlign = 'center';
-  ctx.fillStyle = '#f2c46d'; ctx.font = `bold 40px ${FONT}`; ctx.fillText('The Focus Lens', VW / 2, 170);
-  ctx.fillStyle = '#e3d8bd'; ctx.font = `17px ${FONT}`;
-  wrapText('The first lens of the Great Lighthouse is yours. Far across the Sunken Coast, one window of the dark tower flickers gold.', VW / 2, 220, 560, 24);
-  ctx.fillStyle = '#9fb6c0'; ctx.font = `italic 16px ${FONT}`; ctx.fillText('— End of the Lumen prototype —', VW / 2, 320);
-  const t = Math.floor(stats.time), mm = String(Math.floor(t / 60)).padStart(2, '0'), ss = String(t % 60).padStart(2, '0');
-  ctx.fillStyle = '#e9dcb8'; ctx.font = `15px ${FONT}`;
-  ctx.fillText(`Time ${mm}:${ss}   ·   Falls ${stats.falls}   ·   Lights out ${stats.deaths}   ·   Murklings banished ${stats.kills}`, VW / 2, 360);
-  if (stateT > 1) { ctx.fillStyle = `rgba(242,196,109,${0.55 + 0.45 * Math.sin(time * 3)})`; ctx.fillText('Press Enter, Jump, or tap to return to the title', VW / 2, 430); }
-  ctx.globalAlpha = 1;
-}
 
 /* =====================================================================
    Tuning panel
@@ -2886,7 +2869,7 @@ const ED_TEMPL = {
 const VEC = { right: [1, 0], left: [-1, 0], up: [0, -1], down: [0, 1] };
 const vecName = v => Object.keys(VEC).find(k => VEC[k][0] === v[0] && VEC[k][1] === v[1]) || 'up';
 const ED_FIELDS = {
-  beacons: [{ k: 'final', l: 'Final beacon (ending)', type: 'check' }],
+  beacons: [{ k: 'final', l: 'Gold-rimmed beacon', type: 'check' }],
   enemies: [{ k: 't', l: 'Type', type: 'select', opts: [['murk', 'Murkling'], ['shell', 'Shellback'], ['wing', 'Gloomwing'], ['drip', 'Dripper'], ['crawler', 'Sand Crawler'], ['wisp', 'Frost Wisp'], ['bloat', 'Bloat']] },
             { k: 'elite', l: 'Harder variant', type: 'check' }],
   lore: [{ k: 'title', l: 'Title', type: 'text' }, { k: 'text', l: 'Text', type: 'area' }],
