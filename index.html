@@ -205,7 +205,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.24.0';
+const VERSION = '0.24.1';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -388,7 +388,7 @@ function addRegions(g, m) {
   R(4, 74, 14, 79, '#'); R(17, 77, 18, 77, '#');           // bluff with a step up to it
   m.beacons.push({ x: 58, gy: 80 }); m.lamps.push({ x: 22, gy: 80 });
   m.lore.push({ x: 37, gy: 80, title: "Keeper's Log XI — Singing Sand",
-    text: "Some dunes hum or boom when sand slides down their faces, a sound sailors once blamed on spirits. Quicksand is only sand so soaked it can no longer hold weight: struggle and you sink, keep moving lightly and you rise.\\nWhat waits under this beach does not wait patiently." });
+    text: "Some dunes hum or boom when sand slides down their faces, a sound sailors once blamed on spirits. Quicksand is only sand so soaked it can no longer hold weight: you sink slowly, and can climb out if you don't linger.\nWhat lives under this beach grips like a crab, and like a crab it lets go of whatever thrashes hard enough." });
   m.upgrades.push({ x: 9, gy: 74, kind: 'fuel', amt: 25, name: 'Sunbaked Flask' });
   m.enemies.push({ t: 'crawler', x: 45, y: 80 }, { t: 'crawler', x: 30, y: 80 }, { t: 'crawler', x: 12, y: 74 }, { t: 'crawler', x: 56, y: 80 });
   m.areas.push({ name: 'Bleached Dunes', theme: 'dunes', x0: 0, y0: 44, x1: 64, y1: 100, elite: 0.1 });
@@ -399,7 +399,7 @@ function addRegions(g, m) {
   for (const [x0, y, x1] of [[126, 37, 131], [134, 34, 138], [142, 31, 146], [150, 28, 154], [158, 26, 162], [166, 23, 172], [100, 37, 105], [92, 34, 96]]) R(x0, y, x1, y, 'I');
   m.beacons.push({ x: 100, gy: 40 }); m.lamps.push({ x: 140, gy: 40 });
   m.lore.push({ x: 110, gy: 40, title: "Keeper's Log XII — Ice Blink",
-    text: "Polar sailors watched for 'ice blink': a white glare on the underside of low clouds, thrown up by pack ice beyond the horizon. Ice is mostly clear, but its countless cracks scatter light back the way it came.\\nThe cold things here are drawn to any flame. They would rather put it out." });
+    text: "Polar sailors watched for 'ice blink': a white glare on the underside of low clouds, thrown up by pack ice beyond the horizon. Ice is mostly clear, but its countless cracks scatter light back the way it came.\nThe cold things here are drawn to any flame. They would rather put it out." });
   m.upgrades.push({ x: 170, gy: 23, kind: 'mask', amt: 1, name: 'Frost Wick' });
   m.enemies.push({ t: 'wisp', x: 130, y: 34 }, { t: 'wisp', x: 112, y: 34 }, { t: 'wisp', x: 150, y: 25, elite: true }, { t: 'wisp', x: 162, y: 33 });
   m.areas.push({ name: 'Rime Hollows', theme: 'ice', x0: 70, y0: 0, x1: 185, y1: 43, elite: 0.3 });
@@ -412,7 +412,7 @@ function addRegions(g, m) {
   R(231, 118, 250, 126, '#'); R(226, 124, 227, 124, '#'); R(228, 121, 229, 121, '#');  // a sunken pillar
   m.beacons.push({ x: 213, gy: 127 }); m.lamps.push({ x: 188, gy: 127 });
   m.lore.push({ x: 166, gy: 127, title: "Keeper's Log XIII — Lights Below",
-    text: "Most creatures of the deep sea make their own light. Some flash to startle hunters, some glow to hide their shadow from below, and the pufferfish makes itself too big and too sharp to swallow.\\nDo not keep your light on one for long." });
+    text: "Most creatures of the deep sea make their own light. Some flash to startle hunters, some glow to hide their shadow from below, and the pufferfish makes itself too big and too sharp to swallow.\nDo not keep your light on one for long." });
   m.upgrades.push({ x: 238, gy: 118, kind: 'fuel', amt: 25, name: 'Tidewrack Flask' });
   m.enemies.push({ t: 'bloat', x: 175, y: 115 }, { t: 'bloat', x: 198, y: 112 }, { t: 'bloat', x: 222, y: 116 }, { t: 'bloat', x: 238, y: 106, elite: true });
   m.areas.push({ name: 'Kelp Deep', theme: 'deep', x0: 140, y0: 100, x1: 267, y1: 131, elite: 0.45 });
@@ -1351,7 +1351,6 @@ function aiCrawler(e, dt, dx, dy) {
     if (e.state === 'hunt') { e.dir = Math.sign(dx) || e.dir; e.vx = approach(e.vx, e.dir * 75, 500 * dt); }
     if (!p.grabbed && p.inv <= 0 && p.hazard <= 0 && overlap(e, { x: p.x + 2, y: p.y + 4, w: p.w - 4, h: p.h - 4 })) {
       e.state = 'grab'; e.grabT = 0; p.grabbed = e; p.escape = 0; addShake(4); sandPuff(ecx, e.y + e.h, 12);
-      if (!seenGrab) { seenGrab = true; toast('It drags you down. Struggle!', 2); }
     } else if (e.st <= 0) { if (e.state === 'lunge') { e.state = 'hunt'; e.st = rnd(1.4, 2.2); } else { e.state = 'dive'; e.st = 0.45; } }
   } else if (e.state === 'stun') { e.vx = approach(e.vx, 0, 600 * dt); if (e.st <= 0) { e.state = 'dive'; e.st = 0.45; } }
   e.vy = Math.min(e.vy + 1800 * dt, 600);
@@ -1360,7 +1359,6 @@ function aiCrawler(e, dt, dx, dy) {
   e.y += e.vy * dt;
   if (e.y + e.h >= floorY) { e.y = floorY - e.h; e.vy = 0; e.grounded = true; } else e.grounded = false;
 }
-let seenGrab = false;
 /* Frost Wisp (Rime Hollows): a drifting ice crystal drawn to your flame. It keeps its distance,
    flares, and fires a fan of frost shards that chill you (slower running and jumping). */
 function aiWisp(e, dt, dx, dy) {
