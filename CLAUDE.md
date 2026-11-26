@@ -6,3 +6,4 @@
 - Design intent: inspired by Hollow Knight but not a copy. No swipe attack, no pogo (locked ability flag only), no channelled heal. Light is the core verb.
 - **Always merge automatically** (user's standing instruction): after pushing, open a PR to `main` and merge it yourself.
 - The map is data: `buildOfficialGrid()` + the `*_DEF` lists form `officialMap()`; `loadMap()` loads any map. The in-game editor (M) saves a custom map to localStorage (`lumen.map.v1`) which overrides the official one in that browser. To adopt a user's exported map as official, replace the official data with it.
+- The world is 268×132 tiles. The original coast is carved by `buildOfficialGrid()` in its own 200×60 coordinates and placed at offset (`OX`, `OY`) = (64, 40); the regions around it (Bleached Dunes west, Rime Hollows north, Kelp Deep south) are carved by `addRegions()` in world coordinates. `m.areas` names regions and sets their theme (palette, background) and harder-variant odds.
