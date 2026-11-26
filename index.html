@@ -205,7 +205,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.26.0';
+const VERSION = '0.27.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -311,8 +311,9 @@ function pollPad() {
    Driftwood Shore (main band, floor row 40) → optional Wreck Heights above →
    mirror hall → drop into the Glasswater Caverns → climb the Lamp Tower.
    ===================================================================== */
-const W = 268, H = 132;
-const OX = 64, OY = 40;   // where the original coast sits inside the larger world
+const W = 400, H = 200;
+const IW = 268, IH = 132, SX = 66, SY = 34;   // the inner world (coast + first regions) is built IW×IH, then placed at (SX, SY)
+const OX = 64, OY = 40;   // where the original coast sits inside the inner world
 let grid, DOOR = null;
 function buildOfficialGrid() {
   grid = []; for (let y = 0; y < H; y++) grid.push(new Array(W).fill('#'));
@@ -363,7 +364,7 @@ function buildOfficialGrid() {
 const MAP_KEY = 'lumen.map.v1';
 const clone = o => JSON.parse(JSON.stringify(o));
 function officialMap() {
-  const old = buildOfficialGrid(), g = Array.from({ length: H }, () => new Array(W).fill('#'));
+  const old = buildOfficialGrid(), g = Array.from({ length: IH }, () => new Array(IW).fill('#'));
   for (let y = 0; y < 60; y++) for (let x = 0; x < 200; x++) g[y + OY][x + OX] = old[y][x];
   const sh = (o, ky = 'gy') => ({ ...o, x: o.x + OX, [ky]: o[ky] + OY });
   const m = {
@@ -373,13 +374,137 @@ function officialMap() {
     src: sh(SRC, 'y'), cry: sh(CRY, 'y'), areas: [],
   };
   addRegions(g, m);
-  m.rows = g.map(r => r.join(''));
+  const big = Array.from({ length: H }, () => new Array(W).fill('#'));
+  for (let y = 0; y < IH; y++) for (let x = 0; x < IW; x++) big[y + SY][x + SX] = g[y][x];
+  shiftMap(m, SX, SY);
+  addOuterRegions(big, m);
+  m.rows = big.map(r => r.join(''));
   return clone(m);
+}
+function shiftMap(m, dx, dy) {
+  const mv = o => { if (!o) return; o.x += dx; if ('y' in o) o.y += dy; if ('gy' in o) o.gy += dy; };
+  mv(m.spawn); mv(m.src); mv(m.cry);
+  for (const k of ['beacons', 'lamps', 'pools', 'enemies', 'lore', 'upgrades', 'tanks', 'mirrors']) for (const o of m[k]) mv(o);
+  for (const a of m.areas) { a.x0 += dx; a.x1 += dx; a.y0 += dy; a.y1 += dy; }
+}
+/* The outer ring, in world coordinates: five regions wrapped around the old world and linked to it
+   and to each other, so the map is a web of loops rather than a line. Tier (1-5) sets how dangerous an area is. */
+function addOuterRegions(g, m) {
+  const R = (x0, y0, x1, y1, c) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (y > 0 && y < H - 1 && x > 0 && x < W - 1) g[y][x] = c; };
+  let seed = 90210; const rng = () => (seed = seed * 16807 % 2147483647) / 2147483647;
+  // staggered ledges every 3 rows (always a short hop from one row to the next), some left out
+  const ledges = (x0, y0, x1, floorY, dens) => {
+    for (let j = 1, y = floorY - 3; y >= y0 + 3; j++, y -= 3) for (let x = x0 + 2 + (j % 2) * 4; x + 3 <= x1 - 1; x += 8) {
+      if (rng() > dens) continue;
+      const a = x + Math.floor(rng() * 3) - 1, w = 2 + Math.floor(rng() * 3);
+      if (rng() < 0.12 && y + 2 < floorY) R(a, y, a + 1, y + 2, '#'); else R(a, y, a + w - 1, y, '#');   // mostly slabs, now and then a stub of rock
+    }
+  };
+  // a ragged roof and a lumpy floor for a hall, so it reads as a cave rather than a box
+  const rough = (x0, y0, x1, floorY) => {
+    let d = 0, b = 0;
+    for (let x = x0; x <= x1; x++) {
+      d = clamp(d + Math.floor(rng() * 3) - 1, 0, 3); if (d) R(x, y0, x, y0 + d - 1, '#');
+      if (b > 0) { b--; R(x, floorY - 1, x, floorY - 1, '#'); } else if (rng() < 0.05) b = 2 + Math.floor(rng() * 4);
+    }
+  };
+  // a rough lump of rock hanging in a hall
+  const blob = (cx, cy, rx, ry) => { for (let y = cy - ry; y <= cy + ry; y++) for (let x = cx - rx; x <= cx + rx; x++) { const k = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2; if (k < 0.75 + rng() * 0.35) R(x, y, x, y, '#'); } };
+  // a 4-wide shaft from an upper floor (yTop) down to a lower floor (yBot), with alternating ledges to climb
+  const ladder = (x, yTop, yBot) => { R(x, yTop - 3, x + 3, yBot - 1, '.'); for (let y = yBot - 3, k = 0; y > yTop - 1; y -= 3, k++) R(x + (k % 2) * 2, y, x + 1 + (k % 2) * 2, y, '#'); };
+  const E = (t, x, y, o) => m.enemies.push({ t, x, y, ...o });
+  const A = (name, theme, tier, x0, y0, x1, y1) => m.areas.push({ name, theme, tier, x0, y0, x1, y1 });
+
+  // ---- NORTH-WEST: Glowcap Grove — a fungal hall west of the Hollows and a canopy above it
+  R(4, 46, 134, 73, '.');                                      // the hall (floor row 74), open to the Hollows
+  R(135, 66, 149, 73, '.');
+  ledges(6, 46, 132, 74, 0.8); rough(4, 46, 132, 74); blob(88, 56, 6, 3);
+  R(30, 71, 36, 73, '#'); R(70, 72, 76, 73, '#'); R(50, 46, 52, 56, '#'); R(110, 46, 112, 54, '#');
+  R(8, 4, 127, 38, '.');                                       // the canopy (floor row 39)
+  ledges(10, 4, 125, 39, 0.8); rough(8, 4, 127, 39); blob(40, 14, 7, 4); blob(100, 22, 5, 3);
+  R(118, 36, 121, 36, '#'); R(122, 33, 125, 33, '#');          // steps up into the Spires
+  ladder(20, 39, 74); ladder(96, 39, 74);
+  ladder(120, 74, 114);                                        // down into the sky over the Bleached Dunes
+  // Rootway: a long root-shaft down the far west, from the Grove to the Drowned Vault, with a side door to the Dunes
+  ladder(4, 74, 171);
+  R(8, 104, 69, 107, '.');                                     // tunnel to the top of the Dunes bluff
+  m.beacons.push({ x: 40, gy: 74 }); m.lamps.push({ x: 108, gy: 74 }); m.pools.push({ x: 60, gy: 39 });
+  m.lore.push({ x: 62, gy: 74, title: "Keeper's Log XIV — Foxfire",
+    text: "Rotting wood in old forests sometimes glows a faint green, a light called foxfire. It comes from fungi that burn their food with a chemical giving off light instead of heat: cold light, like a firefly's.\nThe caps here glow the same way. They feed on the dark, and so does what grazes on them." });
+  m.upgrades.push({ x: 64, gy: 39, kind: 'mask', amt: 1, name: 'Glowcap Wick' });
+  E('wing', 50, 60, { swarm: 5 }); E('murk', 82, 74, { size: 'big' }); E('murk', 100, 74, { swarm: 4 }); E('shell', 45, 74);
+  E('drip', 70, 46); E('drip', 126, 46); E('wing', 40, 20, { swarm: 4 }); E('wing', 90, 15, { size: 'big', elite: true });
+  E('murk', 80, 39, { swarm: 4 }); E('shell', 110, 39, { size: 'big' }); E('murk', 26, 39, { elite: true });
+  A('Rootway', 'grove', 4, 1, 74, 7, 140); A('Glowcap Grove', 'grove', 4, 1, 1, 134, 77);
+
+  // ---- NORTH: Windworn Spires — a long gallery over the Hollows, from the Grove canopy to the Vents
+  R(128, 4, 332, 30, '.');                                     // floor row 31
+  ledges(130, 4, 330, 31, 0.8); rough(128, 4, 332, 31); blob(225, 12, 8, 3); blob(310, 10, 5, 3);
+  for (const x of [160, 200, 250, 290]) { R(x, 22, x + 2, 30, '#'); R(x - 6, 28, x - 4, 28, '#'); R(x - 3, 25, x - 1, 25, '#'); R(x + 3, 25, x + 5, 25, '#'); R(x + 6, 28, x + 8, 28, '#'); }   // the spires, with steps up each side
+  R(210, 31, 240, 31, 'I');
+  ladder(239, 31, 74);                                         // down into the Rime Hollows
+  m.beacons.push({ x: 140, gy: 31 }); m.lamps.push({ x: 226, gy: 31 });
+  m.lore.push({ x: 180, gy: 31, title: "Keeper's Log XV — Why the Sky Is Blue",
+    text: "Sunlight is every colour at once. Air scatters the short blue waves far more than the long red ones, so the whole sky glows blue, while a low sun, seen through more air, is left red and gold.\nUp here the air is thin and the sky goes almost black. What flies this high has learned to do without much light." });
+  m.upgrades.push({ x: 251, gy: 22, kind: 'fuel', amt: 25, name: 'Gale Flask' });
+  E('wisp', 172, 14, { swarm: 5 }); E('wisp', 222, 12, { size: 'big' }); E('wing', 270, 14, { swarm: 4 }); E('shell', 272, 31, { size: 'big' });
+  E('murk', 305, 31, { swarm: 4 }); E('wing', 190, 22, { elite: true }); E('wisp', 315, 18, { elite: true }); E('murk', 230, 31, { size: 'big' });
+  A('Windworn Spires', 'spire', 4, 128, 1, 332, 33);
+
+  // ---- EAST: Cinder Vents — five stacked chambers down the east edge, touching the Spires, the Lamp Tower, Kelp Deep and the Abyss
+  R(333, 4, 396, 30, '.'); ledges(335, 4, 396, 31, 0.8); rough(336, 4, 396, 31);                       // V1 (floor 31)
+  R(336, 40, 396, 70, '.'); ledges(336, 40, 396, 71, 0.8); rough(336, 40, 396, 71);                    // V2 (floor 71)
+  R(336, 78, 396, 99, '.'); ledges(336, 78, 396, 100, 0.8);                   // V3 (floor 100)
+  R(328, 96, 335, 99, '.');                                                    //   door from the Lamp Tower
+  R(336, 110, 396, 151, '.'); ledges(336, 110, 396, 152, 0.8); rough(336, 110, 396, 152); blob(366, 128, 6, 4);                // V4 (floor 152)
+  R(317, 146, 335, 151, '.');                                                  //   tunnel from Kelp Deep
+  R(336, 162, 396, 196, '.'); ledges(336, 162, 396, 197, 0.8); rough(336, 162, 396, 197); blob(370, 175, 5, 3);                // V5 (floor 197)
+  ladder(360, 31, 71); ladder(380, 71, 100); ladder(350, 100, 152); ladder(386, 152, 197);
+  R(366, 68, 372, 70, '#'); R(342, 149, 346, 151, '#'); R(352, 194, 360, 196, '#');
+  m.beacons.push({ x: 342, gy: 100 }); m.lamps.push({ x: 372, gy: 152 }); m.pools.push({ x: 390, gy: 71 }, { x: 360, gy: 197 });
+  m.lore.push({ x: 350, gy: 71, title: "Keeper's Log XVI — Red Hot",
+    text: "Heat anything enough and it glows: dull red first, then orange, yellow, and at last white. Smiths judged a blade's heat by its colour long before thermometers; the colour of a glow tells you how hot it is.\nThese vents burn red. What lives here has grown thick skin against the heat, and against light." });
+  m.upgrades.push({ x: 393, gy: 197, kind: 'mask', amt: 1, name: 'Cinder Wick' });
+  E('wing', 355, 15, { swarm: 5 }); E('murk', 380, 31, { size: 'big', elite: true }); E('shell', 345, 71, { size: 'big', elite: true }); E('murk', 375, 71, { swarm: 5 });
+  E('drip', 360, 78); E('drip', 390, 78); E('wing', 370, 88, { size: 'big', elite: true }); E('murk', 360, 100, { swarm: 4 }); E('shell', 385, 100, { elite: true });
+  E('bloat', 360, 125, { size: 'big', elite: true }); E('wing', 380, 135, { swarm: 5 }); E('murk', 345, 152, { size: 'big', elite: true }); E('shell', 392, 152, { elite: true });
+  E('murk', 372, 197, { swarm: 6 }); E('shell', 380, 197, { size: 'big', elite: true }); E('bloat', 350, 178, { swarm: 4 }); E('wing', 390, 175, { elite: true });
+  A('Cinder Vents', 'ember', 5, 333, 1, 398, 198);
+
+  // ---- SOUTH: The Abyss — under Kelp Deep, opening east into the Vents and west into the Vault
+  R(204, 168, 335, 196, '.'); ledges(206, 168, 330, 197, 0.8); rough(204, 168, 332, 197); blob(232, 176, 6, 3); blob(296, 182, 7, 3);                 // floor row 197
+  ladder(271, 161, 197);                                                         // down through the floor of Kelp Deep
+  R(230, 197, 234, 198, '~'); R(292, 197, 297, 198, '~'); R(250, 168, 252, 180, '#'); R(310, 168, 312, 178, '#');
+  m.beacons.push({ x: 262, gy: 197 }); m.lamps.push({ x: 318, gy: 197 });
+  m.lore.push({ x: 222, gy: 197, title: "Keeper's Log XVIII — The Midnight Zone",
+    text: "Sea water swallows red light within a few metres, and a thousand metres down no sunlight is left at all. Below that lies the midnight zone, where the only light is the glow of living things.\nYour lantern is the brightest thing that has ever come down here. Everything has seen it." });
+  m.upgrades.push({ x: 305, gy: 197, kind: 'fuel', amt: 25, name: 'Abyssal Flask' });
+  E('bloat', 240, 180, { swarm: 6 }); E('bloat', 285, 178, { size: 'big', elite: true }); E('murk', 245, 197, { swarm: 5 }); E('shell', 280, 197, { size: 'big', elite: true });
+  E('drip', 225, 168); E('drip', 300, 168); E('wing', 320, 180, { swarm: 4 }); E('murk', 300, 197, { size: 'big', elite: true }); E('bloat', 215, 185, { elite: true });
+  A('The Abyss', 'abyss', 5, 204, 166, 332, 198);
+
+  // ---- SOUTH-WEST: Drowned Vault — the keepers' archive under the Buried Ruins, joined to the Rootway, Kelp Deep and the Abyss
+  R(8, 140, 203, 170, '.'); ledges(8, 140, 203, 171, 0.8); rough(8, 140, 203, 171); blob(20, 150, 6, 4); blob(115, 155, 9, 4); blob(185, 150, 5, 3);                     // upper hall (floor 171)
+  R(8, 178, 203, 196, '.'); ledges(8, 178, 203, 197, 0.8); rough(8, 178, 203, 197); blob(80, 186, 7, 3); blob(160, 186, 6, 3);                     // lower stacks (floor 197)
+  R(204, 152, 215, 160, '.');                                                    // passage from Kelp Deep
+  R(196, 161, 203, 161, '#'); R(190, 164, 194, 164, '#'); R(196, 167, 199, 167, '#');   // steps down from it
+  ladder(100, 131, 171);                                                         // down through the Ruins floor
+  ladder(50, 171, 197); ladder(180, 171, 197);
+  for (const x of [40, 80, 130, 160]) R(x, 140, x + 2, 152, '#');               // shelves hanging from the roof
+  R(60, 171, 66, 172, 'S'); R(90, 197, 95, 198, '~'); R(140, 197, 146, 198, '~');
+  m.beacons.push({ x: 30, gy: 171 }); m.lamps.push({ x: 150, gy: 171 }); m.pools.push({ x: 120, gy: 171 });
+  m.lore.push({ x: 116, gy: 197, title: "Keeper's Log XVII — The Dark Room",
+    text: "Let light into a dark room through one small hole and an upside-down picture of the world outside appears on the far wall. Artists traced pictures this way for centuries; it is how every camera, and every eye, works.\nThe keepers stored their charts down here, in the dark, where nothing could fade them." });
+  m.upgrades.push({ x: 12, gy: 197, kind: 'fuel', amt: 25, name: 'Archive Flask' });
+  E('shell', 70, 171, { size: 'big' }); E('murk', 110, 171, { swarm: 4 }); E('crawler', 63, 171, { swarm: 3 }); E('drip', 60, 140); E('drip', 170, 140);
+  E('wing', 140, 155, { swarm: 4 }); E('murk', 175, 171, { elite: true }); E('murk', 30, 197, { swarm: 5 }); E('shell', 70, 197, { elite: true });
+  E('bloat', 120, 186, { size: 'big' }); E('murk', 165, 197, { size: 'big', elite: true }); E('wing', 190, 185, { elite: true });
+  A('Drowned Vault', 'vault', 4, 8, 136, 203, 198);
 }
 /* New regions branching out from the coast (world coordinates). Each has its own ground,
    enemy, beacon, wick-lamp, Keeper's Log and reward, and is named in m.areas for theming. */
 function addRegions(g, m) {
-  const R = (x0, y0, x1, y1, c) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (g[y] && x >= 0 && x < W) g[y][x] = c; };
+  const R = (x0, y0, x1, y1, c) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (g[y] && x >= 0 && x < IW) g[y][x] = c; };
   // ---- WEST: Bleached Dunes — past the start, through the old shore wall
   R(4, 60, 64, 79, '.');                                   // open sky over the sand (floor row 80)
   R(48, 80, 53, 81, 'S');                                  // quicksand pit
@@ -403,8 +528,8 @@ function addRegions(g, m) {
   m.enemies.push({ t: 'crawler', x: 45, y: 80, size: 'big' }, { t: 'crawler', x: 30, y: 80, swarm: 3 }, { t: 'crawler', x: 12, y: 74 }, { t: 'crawler', x: 56, y: 80 },
     { t: 'wing', x: 52, y: 63, swarm: 4 }, { t: 'murk', x: 52, y: 97, swarm: 5 }, { t: 'crawler', x: 46, y: 97, swarm: 3 }, { t: 'shell', x: 26, y: 97, size: 'big' },
     { t: 'crawler', x: 15, y: 97, size: 'big', elite: true }, { t: 'drip', x: 42, y: 84 }, { t: 'drip', x: 18, y: 84 });
-  m.areas.push({ name: 'Buried Ruins', theme: 'dunes', x0: 6, y0: 82, x1: 63, y1: 98, elite: 0.25 });
-  m.areas.push({ name: 'Bleached Dunes', theme: 'dunes', x0: 0, y0: 44, x1: 64, y1: 100, elite: 0.1 });
+  m.areas.push({ name: 'Buried Ruins', theme: 'dunes', tier: 3, x0: 6, y0: 82, x1: 63, y1: 98 });
+  m.areas.push({ name: 'Bleached Dunes', theme: 'dunes', tier: 2, x0: 0, y0: 44, x1: 64, y1: 100 });
   // ---- NORTH: Rime Hollows — up through the roof of Wreck Heights
   R(84, 12, 172, 39, '.'); R(84, 40, 172, 40, 'I');        // the hollow, floored with ice
   R(120, 40, 122, 43, '.');                                // shaft down into Wreck Heights
@@ -423,7 +548,7 @@ function addRegions(g, m) {
   m.enemies.push({ t: 'wisp', x: 130, y: 34 }, { t: 'wisp', x: 112, y: 34 }, { t: 'wisp', x: 150, y: 25, elite: true }, { t: 'wisp', x: 162, y: 33 },
     { t: 'wisp', x: 106, y: 17, swarm: 6 }, { t: 'wisp', x: 167, y: 17, size: 'big' }, { t: 'wing', x: 136, y: 24, swarm: 4 },
     { t: 'shell', x: 145, y: 40, size: 'big' }, { t: 'murk', x: 96, y: 22, swarm: 3 });
-  m.areas.push({ name: 'Rime Hollows', theme: 'ice', x0: 70, y0: 0, x1: 185, y1: 43, elite: 0.3 });
+  m.areas.push({ name: 'Rime Hollows', theme: 'ice', tier: 3, x0: 70, y0: 0, x1: 185, y1: 43 });
   // ---- SOUTH: Kelp Deep — down through the floor of the Glasswater Caverns
   R(150, 100, 250, 126, '.');                              // the deep (floor row 127)
   R(206, 96, 209, 99, '.');                                // shaft from the caverns
@@ -444,12 +569,12 @@ function addRegions(g, m) {
   m.enemies.push({ t: 'bloat', x: 175, y: 108 }, { t: 'bloat', x: 198, y: 112 }, { t: 'bloat', x: 222, y: 116 }, { t: 'bloat', x: 238, y: 106, elite: true },
     { t: 'bloat', x: 166, y: 106, swarm: 5 }, { t: 'bloat', x: 205, y: 120, size: 'big' }, { t: 'shell', x: 190, y: 127, size: 'big' },
     { t: 'murk', x: 225, y: 127, swarm: 4 }, { t: 'drip', x: 186, y: 108 }, { t: 'drip', x: 226, y: 106 }, { t: 'wing', x: 158, y: 104, swarm: 3 });
-  m.areas.push({ name: 'Kelp Deep', theme: 'deep', x0: 140, y0: 100, x1: 267, y1: 131, elite: 0.45 });
+  m.areas.push({ name: 'Kelp Deep', theme: 'deep', tier: 4, x0: 140, y0: 100, x1: 267, y1: 131 });
   // ---- named parts of the old coast (for title cards; theme stays the coast)
-  m.areas.push({ name: 'Wreck Heights', theme: 'shore', x0: 94, y0: 43, x1: 153, y1: 58 },
-               { name: 'Glasswater Caverns', theme: 'shore', x0: 164, y0: 85, x1: 255, y1: 99 },
-               { name: 'Lamp Tower', theme: 'shore', x0: 246, y0: 42, x1: 262, y1: 96 },
-               { name: 'Driftwood Shore', theme: 'shore', x0: 65, y0: 59, x1: 200, y1: 84 });
+  m.areas.push({ name: 'Wreck Heights', theme: 'shore', tier: 2, x0: 94, y0: 43, x1: 153, y1: 58 },
+               { name: 'Glasswater Caverns', theme: 'shore', tier: 3, x0: 164, y0: 85, x1: 255, y1: 99 },
+               { name: 'Lamp Tower', theme: 'shore', tier: 3, x0: 246, y0: 42, x1: 262, y1: 96 },
+               { name: 'Driftwood Shore', theme: 'shore', tier: 1, x0: 65, y0: 59, x1: 200, y1: 84 });
 }
 function areaAt(tx, ty) { for (const a of AREAS) if (tx >= a.x0 && tx <= a.x1 && ty >= a.y0 && ty <= a.y1) return a; return null; }
 let OFFICIAL = null, customActive = false;                       // captured once at start-up, before any custom map loads
@@ -570,24 +695,33 @@ const ETYPES = { murk: { w: 24, h: 20, hp: 1.6 }, wing: { w: 22, h: 14, hp: 1.0 
    sz scales the body (and drawing), hp its toughness, kb how far the beam shoves it, emb its ember drops. */
 const SIZES = { small: { sz: 0.62, hp: 0.35, kb: 1.4, emb: 0.5 }, normal: { sz: 1, hp: 1, kb: 1, emb: 1 }, big: { sz: 1.7, hp: 3.2, kb: 0.3, emb: 3 } };
 function makeEnemy(type, cx, y, extra) {
-  const d = ETYPES[type], S = SIZES[(extra && extra.size) || 'normal'] || SIZES.normal, w = Math.round(d.w * S.sz), h = Math.round(d.h * S.sz);
-  return { type, x: cx - w / 2, y, w, h, sz: S.sz, kb: S.kb, emb: S.emb, vx: 0, vy: 0, dir: -1, hp: d.hp * S.hp * (extra && extra.elite ? 1.5 : 1), stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0,
+  const d = ETYPES[type], S = SIZES[(extra && extra.size) || 'normal'] || SIZES.normal, w = Math.round(d.w * S.sz), h = Math.round(d.h * S.sz), tr = tierAt(cx, y);
+  return { type, x: cx - w / 2, y, w, h, sz: S.sz, kb: S.kb, emb: S.emb, tier: tr, vx: 0, vy: 0, dir: -1, hp: d.hp * S.hp * TIER.hp[tr] * (extra && extra.elite ? 1.5 : 1), stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0,
     dead: false, t: Math.random() * 10, grounded: false, state: 'idle', st: 0, cd: rnd(0.5, 1.5), turnT: 0, hx: cx, hy: y + d.h / 2,
     // personality: no two move quite alike
-    agg: rnd(0.7, 1.3), lurk: rnd(20, 150), pref: rnd(60, 120), pace: rnd(0.8, 2.2), seed: rnd(0, 6.28), patience: rnd(4, 11),
+    agg: rnd(0.7, 1.3) * TIER.agg[tr], lurk: rnd(20, 150), pref: rnd(60, 120), pace: rnd(0.8, 2.2), seed: rnd(0, 6.28), patience: rnd(4, 11),
     tac: 'press', tt: 0, side: 0, lurkT: 0, bored: 0, dodgeCD: 0, spitT: 0, spitCD: rnd(1, 3), feint: false, chargeWind: 0, charge: 0, chargeCD: rnd(1, 3),
     pat: 'direct', dbl: false, curve: 0, elite: false, swell: 0, grabT: 0, grabCD: 0, ...extra };
 }
 // Harder variants (Murk Stalker, Bulwark, Duskwing) appear deeper in: none on the shore or in the
 // wrecks, some in the mirror hall, more in the caverns and the tower.
+/* Danger tiers: 1 by the start, 5 at the far edges of the map. A tier toughens enemies, makes them
+   pushier and makes the harder variants more common. Areas set their tier; unnamed parts of the
+   old coast get one from how deep in they are. */
+const TIER = { hp: [0, 0.75, 1, 1.2, 1.45, 1.75], agg: [0, 0.8, 0.95, 1.05, 1.15, 1.3], elite: [0, 0, 0.12, 0.3, 0.45, 0.6], promote: [0, 0, 0, 0, 0.15, 0.3] };
+function tierAt(x, y) {
+  const a = areaAt(Math.floor(x / TILE), Math.floor(y / TILE));
+  if (a && a.tier) return clamp(Math.round(a.tier), 1, 5);
+  const tx = x / TILE - OX - SX, ty = y / TILE - OY - SY;     // the old coast: deeper in, harder
+  if (ty >= 46 || tx >= 160) return 3;
+  if (tx >= 90) return 2;
+  return 1;
+}
 function eliteChance(x, y) {
   const a = areaAt(Math.floor(x / TILE), Math.floor(y / TILE));
-  if (a && a.elite != null) return a.elite;
-  const tx = x / TILE - OX, ty = y / TILE - OY;     // the old coast: deeper in, harder
-  if (ty >= 46 || tx >= 160) return 0.45;
-  if (tx >= 90) return 0.2;
-  return 0;
+  return a && a.elite != null ? a.elite : TIER.elite[tierAt(x, y)];
 }
+const hash01 = n => { const v = Math.sin(n * 12.9898 + 4.1) * 43758.5453; return v - Math.floor(v); };
 function spawnMurk(x, y, extra) {
   return makeEnemy('murk', x, y, { ...extra, elite: Math.random() < eliteChance(x, y) });
 }
@@ -596,7 +730,8 @@ function makePlaced(d, i, k = 0) {   // an enemy from the map, remembering its h
   const n = swarmN(d), size = d.size && d.size !== 'normal' ? d.size : n > 1 ? 'small' : 'normal';
   const S = SIZES[size] || SIZES.normal, h = Math.round(ETYPES[d.t].h * S.sz), fly = d.t === 'wing' || d.t === 'wisp' || d.t === 'bloat';
   const cx = (d.x + 0.5 + (k - (n - 1) / 2) * (fly ? 1.1 : 0.8)) * TILE, oy = fly && n > 1 ? ((k * 7) % 3 - 1) * 0.6 * TILE : 0;
-  const el = !!d.elite, home = { def: i, mem: k, deadT: 0, size };
+  const tr = tierAt(cx, d.y * TILE), el = tr > 1 && (!!d.elite || hash01(i * 31 + k * 7) < TIER.promote[tr]);   // the start stays gentle; the edges promote some
+  const home = { def: i, mem: k, deadT: 0, size };
   if (d.t === 'wing') return makeEnemy('wing', cx, (d.y + 0.5) * TILE - h / 2 + oy, { state: 'hover', elite: el, ...home });
   if (d.t === 'drip') return makeEnemy('drip', cx, d.y * TILE, { state: 'hang', ...home });
   if (d.t === 'wisp' || d.t === 'bloat') return makeEnemy(d.t, cx, (d.y + 0.5) * TILE - h / 2 + oy, { state: 'hover', elite: el, ...home });
@@ -1507,6 +1642,7 @@ function tickEnemies(dt) {
     if (e.dead) continue;
     e.t += dt; e.flash -= dt; e.lungeCD -= dt;
     const dx = pcx - (e.x + e.w / 2), dy = pcy - (e.y + e.h / 2);
+    if (Math.abs(dx) > 1500 || Math.abs(dy) > 1000) continue;      // far-off enemies wait where they are (the world is big)
     if (e.type === 'wing') aiWing(e, dt, dx, dy);
     else if (e.type === 'crawler') aiCrawler(e, dt, dx, dy);
     else if (e.type === 'wisp') aiWisp(e, dt, dx, dy);
@@ -1608,7 +1744,7 @@ function tick(dt) {
   if (state !== 'play') return;
   // Entering a named region shows its title card
   { const a = areaAt(Math.floor((P.x + P.w / 2) / TILE), Math.floor((P.y + P.h / 2) / TILE));
-    if (a && a.name !== areaName) { areaName = a.name; areaCard = { name: a.name, t: 0 }; } }
+    if (a && a.name !== areaName) { areaName = a.name; areaCard = { name: a.name, t: 0, tier: a.tier || 0 }; } }
   if (areaCard) { areaCard.t += dt; if (areaCard.t > 3.4) areaCard = null; }
   traceBeam();
   tickGlass(dt);
@@ -1784,6 +1920,16 @@ const THEMES = {
            sky: ['#132c42', '#0d2033', '#07121d'], hills: ['#163248', '#10273a'], tower: 0 },
   deep:  { deep: ['#061510', '#071812'], fill: ['#0a2219', '#0c271d'], crack: 'rgba(0,10,6,.55)', side: 'rgba(60,140,100,.3)', topA: '50,130,90', top: '#3f9a6a', blade: '#2f7d56', blades: 4, bladeH: 22,
            sky: ['#06231b', '#041812', '#020c08'], hills: ['#082a1f', '#061f17'], tower: 0 },
+  grove: { deep: ['#120c1c', '#140d20'], fill: ['#1d1430', '#221737'], crack: 'rgba(6,2,12,.55)', side: 'rgba(140,90,200,.3)', topA: '170,120,230', top: '#b07ae0', blade: '#7ad8c8', blades: 3, bladeH: 9,
+           sky: ['#1a1030', '#120b22', '#080512'], hills: ['#1c1233', '#150d28'], tower: 0 },
+  spire: { deep: ['#1a1c26', '#1c1e29'], fill: ['#2a2d3c', '#2f3343'], crack: 'rgba(8,8,14,.5)', side: 'rgba(200,190,220,.25)', topA: '220,200,230', top: '#d8c8e0', blade: '#a898b8', blades: 1, bladeH: 5,
+           sky: ['#3a3050', '#2a2440', '#16121f'], hills: ['#2c2640', '#221d33'], tower: 0 },
+  ember: { deep: ['#1c0a06', '#200b07'], fill: ['#2e120a', '#35150c'], crack: 'rgba(255,90,30,.22)', side: 'rgba(200,80,40,.3)', topA: '230,110,50', top: '#e0703a', blade: '#a04a28', blades: 1, bladeH: 5,
+           sky: ['#3a1208', '#240b05', '#120503'], hills: ['#2e0f07', '#220b05'], tower: 0 },
+  vault: { deep: ['#101418', '#12171b'], fill: ['#1d2429', '#222a30'], crack: 'rgba(4,6,8,.55)', side: 'rgba(120,150,160,.3)', topA: '140,170,170', top: '#8fb0aa', blade: '#5f8a80', blades: 2, bladeH: 7,
+           sky: ['#141c22', '#0e1418', '#070a0d'], hills: ['#152026', '#10181d'], tower: 0 },
+  abyss: { deep: ['#03070c', '#040810'], fill: ['#07101a', '#08131f'], crack: 'rgba(0,0,0,.6)', side: 'rgba(40,80,140,.3)', topA: '60,100,170', top: '#4a70b0', blade: '#2a4a80', blades: 2, bladeH: 16,
+           sky: ['#040a14', '#02060c', '#010205'], hills: ['#06101c', '#040b15'], tower: 0 },
 };
 const themeAt = (tx, ty) => { const a = areaAt(tx, ty); return THEMES[(a && a.theme) || 'shore'] || THEMES.shore; };
 const CHUNK = 16, CHUNK_KEEP = 48;      // chunks are drawn on first sight and the least recently used are dropped
@@ -1842,7 +1988,7 @@ function drawBackground() {
   g.addColorStop(0, rgb(0)); g.addColorStop(0.6, rgb(1)); g.addColorStop(1, rgb(2));
   ctx.fillStyle = g; ctx.fillRect(0, 0, VW, VH);
   // Distant Great Lighthouse (only seen from the coast)
-  const depth = cam.y - (40 + OY) * TILE + 302, lx = 820 - (cam.x - OX * TILE) * 0.03, ly = 120 - depth * 0.05, ta = bgCol[5][0] / 255;
+  const depth = cam.y - (40 + OY + SY) * TILE + 302, lx = 820 - (cam.x - (OX + SX) * TILE) * 0.03, ly = 120 - depth * 0.05, ta = bgCol[5][0] / 255;
   if (ta > 0.02) {
     ctx.globalAlpha = ta; ctx.fillStyle = '#0e2740';
     ctx.beginPath(); ctx.moveTo(lx - 22, ly + 300); ctx.lineTo(lx - 13, ly + 40); ctx.lineTo(lx + 13, ly + 40); ctx.lineTo(lx + 22, ly + 300); ctx.fill();
@@ -2473,9 +2619,10 @@ function render() {
       const k = areaCard.t, a = clamp(Math.min(k / 0.6, (3.4 - k) / 0.9), 0, 1);
       ctx.globalAlpha = a; ctx.textAlign = 'center';
       ctx.fillStyle = '#e9dcb8'; ctx.font = `30px ${FONT}`; ctx.fillText(areaCard.name.toUpperCase().split('').join(' '), 0, 170);
-      const w = 120 + areaCard.name.length * 9;
-      ctx.strokeStyle = 'rgba(233,220,184,.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-w, 186); ctx.lineTo(-24, 186); ctx.moveTo(24, 186); ctx.lineTo(w, 186); ctx.stroke();
-      ctx.fillStyle = '#f2c46d'; ctx.beginPath(); ctx.moveTo(0, 181); ctx.lineTo(5, 186); ctx.lineTo(0, 191); ctx.lineTo(-5, 186); ctx.fill();
+      const w = 120 + areaCard.name.length * 9, n = Math.max(1, areaCard.tier), gap = 12 + n * 7;   // one diamond per danger tier
+      ctx.strokeStyle = 'rgba(233,220,184,.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-w, 186); ctx.lineTo(-gap, 186); ctx.moveTo(gap, 186); ctx.lineTo(w, 186); ctx.stroke();
+      ctx.fillStyle = n >= 5 ? '#e0703a' : '#f2c46d';
+      for (let i = 0; i < n; i++) { const dx = (i - (n - 1) / 2) * 14; ctx.beginPath(); ctx.moveTo(dx, 181); ctx.lineTo(dx + 5, 186); ctx.lineTo(dx, 191); ctx.lineTo(dx - 5, 186); ctx.fill(); }
       ctx.globalAlpha = 1;
     }
     ctx.restore();
