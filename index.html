@@ -205,7 +205,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.25.0';
+const VERSION = '0.26.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -390,7 +390,20 @@ function addRegions(g, m) {
   m.lore.push({ x: 37, gy: 80, title: "Keeper's Log XI — Singing Sand",
     text: "Some dunes hum or boom when sand slides down their faces, a sound sailors once blamed on spirits. Quicksand is only sand so soaked it can no longer hold weight: you sink slowly, and can climb out if you don't linger.\nWhat lives under this beach grips like a crab, and like a crab it lets go of whatever thrashes hard enough." });
   m.upgrades.push({ x: 9, gy: 74, kind: 'fuel', amt: 25, name: 'Sunbaked Flask' });
-  m.enemies.push({ t: 'crawler', x: 45, y: 80 }, { t: 'crawler', x: 30, y: 80 }, { t: 'crawler', x: 12, y: 74 }, { t: 'crawler', x: 56, y: 80 });
+  for (const [x0, y, x1] of [[29, 77, 33], [35, 74, 38], [41, 71, 44], [46, 68, 49], [40, 65, 43], [34, 65, 37], [28, 65, 31], [21, 66, 25]]) R(x0, y, x1, y, '#');   // sandstone slabs up the sky
+  m.upgrades.push({ x: 22, gy: 66, kind: 'fuel', amt: 15, name: 'Windworn Flask' });
+  // Buried Ruins: a hole by the beacon drops into an old hall under the sand
+  R(60, 80, 62, 83, '.'); R(60, 82, 60, 82, '#');          // the hole, with a lip to climb back out
+  R(6, 84, 63, 96, '.');                                   // the hall (floor row 97)
+  for (const [x0, y, x1] of [[62, 85, 62], [60, 88, 61], [55, 91, 57], [50, 94, 52]]) R(x0, y, x1, y, '#');   // broken stair down
+  R(44, 97, 49, 98, 'S'); R(12, 97, 17, 98, 'S');          // sand drifted in through the roof
+  R(34, 84, 35, 91, '#'); R(22, 84, 23, 91, '#'); R(28, 94, 30, 96, '#');   // broken columns hanging from the roof, one fallen
+  m.upgrades.push({ x: 7, gy: 97, kind: 'fuel', amt: 25, name: 'Buried Flask' });
+  m.lamps.push({ x: 40, gy: 97 });
+  m.enemies.push({ t: 'crawler', x: 45, y: 80, size: 'big' }, { t: 'crawler', x: 30, y: 80, swarm: 3 }, { t: 'crawler', x: 12, y: 74 }, { t: 'crawler', x: 56, y: 80 },
+    { t: 'wing', x: 52, y: 63, swarm: 4 }, { t: 'murk', x: 52, y: 97, swarm: 5 }, { t: 'crawler', x: 46, y: 97, swarm: 3 }, { t: 'shell', x: 26, y: 97, size: 'big' },
+    { t: 'crawler', x: 15, y: 97, size: 'big', elite: true }, { t: 'drip', x: 42, y: 84 }, { t: 'drip', x: 18, y: 84 });
+  m.areas.push({ name: 'Buried Ruins', theme: 'dunes', x0: 6, y0: 82, x1: 63, y1: 98, elite: 0.25 });
   m.areas.push({ name: 'Bleached Dunes', theme: 'dunes', x0: 0, y0: 44, x1: 64, y1: 100, elite: 0.1 });
   // ---- NORTH: Rime Hollows — up through the roof of Wreck Heights
   R(84, 12, 172, 39, '.'); R(84, 40, 172, 40, 'I');        // the hollow, floored with ice
@@ -401,7 +414,15 @@ function addRegions(g, m) {
   m.lore.push({ x: 110, gy: 40, title: "Keeper's Log XII — Ice Blink",
     text: "Polar sailors watched for 'ice blink': a white glare on the underside of low clouds, thrown up by pack ice beyond the horizon. Ice is mostly clear, but its countless cracks scatter light back the way it came.\nThe cold things here are drawn to any flame. They would rather put it out." });
   m.upgrades.push({ x: 170, gy: 23, kind: 'mask', amt: 1, name: 'Frost Wick' });
-  m.enemies.push({ t: 'wisp', x: 130, y: 34 }, { t: 'wisp', x: 112, y: 34 }, { t: 'wisp', x: 150, y: 25, elite: true }, { t: 'wisp', x: 162, y: 33 });
+  R(108, 37, 109, 39, '#'); R(150, 38, 151, 39, '#'); R(160, 37, 161, 39, '#');                 // frozen boulders on the floor
+  R(140, 12, 141, 21, 'I'); R(155, 12, 156, 18, 'I'); R(128, 12, 129, 25, 'I');                // icicles hanging from the roof
+  // The Frozen Gallery: a second storey over the west end, climbed from the ledges by the beacon
+  for (const [x0, y, x1] of [[86, 31, 89], [91, 28, 94], [86, 25, 88]]) R(x0, y, x1, y, 'I');
+  R(90, 22, 118, 22, 'I'); R(100, 19, 101, 21, 'I'); R(110, 12, 111, 17, 'I');
+  m.upgrades.push({ x: 116, gy: 22, kind: 'fuel', amt: 25, name: 'Rime Flask' });
+  m.enemies.push({ t: 'wisp', x: 130, y: 34 }, { t: 'wisp', x: 112, y: 34 }, { t: 'wisp', x: 150, y: 25, elite: true }, { t: 'wisp', x: 162, y: 33 },
+    { t: 'wisp', x: 106, y: 17, swarm: 6 }, { t: 'wisp', x: 167, y: 17, size: 'big' }, { t: 'wing', x: 136, y: 24, swarm: 4 },
+    { t: 'shell', x: 145, y: 40, size: 'big' }, { t: 'murk', x: 96, y: 22, swarm: 3 });
   m.areas.push({ name: 'Rime Hollows', theme: 'ice', x0: 70, y0: 0, x1: 185, y1: 43, elite: 0.3 });
   // ---- SOUTH: Kelp Deep — down through the floor of the Glasswater Caverns
   R(150, 100, 250, 126, '.');                              // the deep (floor row 127)
@@ -414,7 +435,15 @@ function addRegions(g, m) {
   m.lore.push({ x: 166, gy: 127, title: "Keeper's Log XIII — Lights Below",
     text: "Most creatures of the deep sea make their own light. Some flash to startle hunters, some glow to hide their shadow from below, and the pufferfish makes itself too big and too sharp to swallow.\nDo not keep your light on one for long." });
   m.upgrades.push({ x: 238, gy: 118, kind: 'fuel', amt: 25, name: 'Tidewrack Flask' });
-  m.enemies.push({ t: 'bloat', x: 175, y: 115 }, { t: 'bloat', x: 198, y: 112 }, { t: 'bloat', x: 222, y: 116 }, { t: 'bloat', x: 238, y: 106, elite: true });
+  R(160, 100, 162, 109, '#'); R(185, 100, 187, 107, '#'); R(225, 100, 227, 105, '#');          // rock hanging from the roof
+  R(170, 124, 173, 126, '#'); R(200, 125, 202, 126, '#');                                         // reefs on the floor
+  for (const [x0, y, x1] of [[175, 121, 178], [180, 118, 183], [174, 115, 177], [180, 112, 184]]) R(x0, y, x1, y, '#');   // a reef stack
+  for (const [x0, y, x1] of [[163, 124, 165], [159, 121, 160], [154, 118, 156], [158, 115, 159], [150, 112, 155]]) R(x0, y, x1, y, '#');   // a shelf up the west wall
+  m.upgrades.push({ x: 152, gy: 112, kind: 'fuel', amt: 25, name: 'Brine Flask' });
+  m.lamps.push({ x: 182, gy: 112 });
+  m.enemies.push({ t: 'bloat', x: 175, y: 108 }, { t: 'bloat', x: 198, y: 112 }, { t: 'bloat', x: 222, y: 116 }, { t: 'bloat', x: 238, y: 106, elite: true },
+    { t: 'bloat', x: 166, y: 106, swarm: 5 }, { t: 'bloat', x: 205, y: 120, size: 'big' }, { t: 'shell', x: 190, y: 127, size: 'big' },
+    { t: 'murk', x: 225, y: 127, swarm: 4 }, { t: 'drip', x: 186, y: 108 }, { t: 'drip', x: 226, y: 106 }, { t: 'wing', x: 158, y: 104, swarm: 3 });
   m.areas.push({ name: 'Kelp Deep', theme: 'deep', x0: 140, y0: 100, x1: 267, y1: 131, elite: 0.45 });
   // ---- named parts of the old coast (for title cards; theme stays the coast)
   m.areas.push({ name: 'Wreck Heights', theme: 'shore', x0: 94, y0: 43, x1: 153, y1: 58 },
@@ -537,9 +566,12 @@ function newPlayer() {
 }
 const ETYPES = { murk: { w: 24, h: 20, hp: 1.6 }, wing: { w: 22, h: 14, hp: 1.0 }, shell: { w: 30, h: 22, hp: 3.2 }, drip: { w: 18, h: 16, hp: 0.9 },
   crawler: { w: 26, h: 12, hp: 1.4 }, wisp: { w: 16, h: 16, hp: 1.2 }, bloat: { w: 20, h: 18, hp: 4.0 } };
+/* Body sizes: a swarm of small, quick-dying ones in some places, slow heavy brutes in others.
+   sz scales the body (and drawing), hp its toughness, kb how far the beam shoves it, emb its ember drops. */
+const SIZES = { small: { sz: 0.62, hp: 0.35, kb: 1.4, emb: 0.5 }, normal: { sz: 1, hp: 1, kb: 1, emb: 1 }, big: { sz: 1.7, hp: 3.2, kb: 0.3, emb: 3 } };
 function makeEnemy(type, cx, y, extra) {
-  const d = ETYPES[type];
-  return { type, x: cx - d.w / 2, y, w: d.w, h: d.h, vx: 0, vy: 0, dir: -1, hp: d.hp * (extra && extra.elite ? 1.5 : 1), stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0,
+  const d = ETYPES[type], S = SIZES[(extra && extra.size) || 'normal'] || SIZES.normal, w = Math.round(d.w * S.sz), h = Math.round(d.h * S.sz);
+  return { type, x: cx - w / 2, y, w, h, sz: S.sz, kb: S.kb, emb: S.emb, vx: 0, vy: 0, dir: -1, hp: d.hp * S.hp * (extra && extra.elite ? 1.5 : 1), stun: 0, flash: 0, wind: 0, lungeCD: 0.5, beamT: 0,
     dead: false, t: Math.random() * 10, grounded: false, state: 'idle', st: 0, cd: rnd(0.5, 1.5), turnT: 0, hx: cx, hy: y + d.h / 2,
     // personality: no two move quite alike
     agg: rnd(0.7, 1.3), lurk: rnd(20, 150), pref: rnd(60, 120), pace: rnd(0.8, 2.2), seed: rnd(0, 6.28), patience: rnd(4, 11),
@@ -559,16 +591,20 @@ function eliteChance(x, y) {
 function spawnMurk(x, y, extra) {
   return makeEnemy('murk', x, y, { ...extra, elite: Math.random() < eliteChance(x, y) });
 }
-function makePlaced(d, i) {          // an enemy from the map, remembering its home slot
-  const cx = (d.x + 0.5) * TILE, el = !!d.elite, home = { def: i, deadT: 0 };
-  if (d.t === 'wing') return makeEnemy('wing', cx, (d.y + 0.5) * TILE - 7, { state: 'hover', elite: el, ...home });
+const swarmN = d => Math.max(1, Math.min(10, Math.round(d.swarm || 1)));
+function makePlaced(d, i, k = 0) {   // an enemy from the map, remembering its home slot (and its place in a swarm)
+  const n = swarmN(d), size = d.size && d.size !== 'normal' ? d.size : n > 1 ? 'small' : 'normal';
+  const S = SIZES[size] || SIZES.normal, h = Math.round(ETYPES[d.t].h * S.sz), fly = d.t === 'wing' || d.t === 'wisp' || d.t === 'bloat';
+  const cx = (d.x + 0.5 + (k - (n - 1) / 2) * (fly ? 1.1 : 0.8)) * TILE, oy = fly && n > 1 ? ((k * 7) % 3 - 1) * 0.6 * TILE : 0;
+  const el = !!d.elite, home = { def: i, mem: k, deadT: 0, size };
+  if (d.t === 'wing') return makeEnemy('wing', cx, (d.y + 0.5) * TILE - h / 2 + oy, { state: 'hover', elite: el, ...home });
   if (d.t === 'drip') return makeEnemy('drip', cx, d.y * TILE, { state: 'hang', ...home });
-  if (d.t === 'wisp' || d.t === 'bloat') return makeEnemy(d.t, cx, (d.y + 0.5) * TILE - ETYPES[d.t].h / 2, { state: 'hover', elite: el, ...home });
-  if (d.t === 'crawler') return makeEnemy('crawler', cx, d.y * TILE - ETYPES.crawler.h, { state: 'buried', elite: el, ...home });
-  return makeEnemy(d.t, cx, d.y * TILE - ETYPES[d.t].h, { elite: el, ...home });
+  if (d.t === 'wisp' || d.t === 'bloat') return makeEnemy(d.t, cx, (d.y + 0.5) * TILE - h / 2 + oy, { state: 'hover', elite: el, ...home });
+  if (d.t === 'crawler') return makeEnemy('crawler', cx, d.y * TILE - h, { state: 'buried', elite: el, ...home });
+  return makeEnemy(d.t, cx, d.y * TILE - h, { elite: el, ...home });
 }
 function resetEnemies() {
-  enemies = ENEMY_DEF.map(makePlaced);
+  enemies = ENEMY_DEF.flatMap((d, i) => Array.from({ length: swarmN(d) }, (_, k) => makePlaced(d, i, k)));
   resetPools(); globs = [];
 }
 /* Fallen map enemies come back to their home spot once you've been gone a while: dead long
@@ -580,7 +616,7 @@ function tickRespawns(dt) {
     if (!e.dead || e.def == null || e.despawned) continue;
     e.deadT += dt;
     if (e.deadT < T.respawnDelay) continue;
-    const fresh = makePlaced(ENEMY_DEF[e.def], e.def);
+    const fresh = makePlaced(ENEMY_DEF[e.def], e.def, e.mem || 0);
     if (Math.hypot(fresh.x + fresh.w / 2 - pcx, fresh.y + fresh.h / 2 - pcy) < T.respawnDist || onScreen(fresh)) continue;
     enemies[k] = fresh;
   }
@@ -960,7 +996,7 @@ function respawnAtCheckpoint() {
   state = 'play'; fade = 1;
 }
 function burnEnemy(e, p, dt, hit) {
-  const ang = hit.ang, dx = Math.cos(ang), dy = Math.sin(ang), lim = T.beamKnock;
+  const ang = hit.ang, dx = Math.cos(ang), dy = Math.sin(ang), lim = T.beamKnock * (e.kb ?? 1);
   // Shellback: light striking its face glances off the shell. Burn it from behind or from above —
   // or pierce it with a focused point of light.
   if (e.type === 'shell' && !hit.focus && dy < 0.75 && Math.sign(dx) === -e.dir) {
@@ -995,8 +1031,8 @@ function burnEnemy(e, p, dt, hit) {
     freeze = Math.max(freeze, T.killHitstop); addShake(T.shakeKill);
     burst(ex, ey, 26, { color: '#1b1533', smin: 40, smax: 200, lmin: 0.4, lmax: 0.9, zmin: 2, zmax: 6, g: -60 });
     burst(ex, ey, 14, { color: '#cfc4ff', smin: 60, smax: 240, lmin: 0.2, lmax: 0.5, add: true });
-    const n = e.type === 'shell' ? 2 : 1;
-    for (let i = 0; i < n; i++) if (Math.random() < (e.spawned ? T.spawnEmberChance : T.emberChance)) embers.push({ x: ex - 3, y: ey - 3, w: 6, h: 6, vx: rnd(-60, 60), vy: -rnd(140, 220), t: 0, life: 15 });
+    const n = (e.type === 'shell' ? 2 : 1) * (e.emb ?? 1);
+    for (let i = 0; i < Math.ceil(n); i++) if (Math.random() < (e.spawned ? T.spawnEmberChance : T.emberChance) * Math.min(1, n - i)) embers.push({ x: ex - 3, y: ey - 3, w: 6, h: 6, vx: rnd(-60, 60), vy: -rnd(140, 220), t: 0, life: 15 });
   }
 }
 function rotateMirror(m) {
@@ -2153,7 +2189,13 @@ function drawBloat(e, pass) {
   ctx.fillStyle = body; ctx.beginPath(); ctx.moveTo(-d * r, 0); ctx.lineTo(-d * (r + 6), -4 + Math.sin(e.t * 9) * 2); ctx.lineTo(-d * (r + 6), 4 + Math.sin(e.t * 9) * 2); ctx.closePath(); ctx.fill(); ctx.stroke();   // tail
   ctx.restore();
 }
-function drawEnemy(e) {
+function sizedDraw(e, fn) {             // draw at the enemy's size, scaled about where it stands (or its centre, for flyers)
+  if (!e.sz || e.sz === 1) return fn(e);
+  const fly = e.type === 'wing' || e.type === 'wisp' || e.type === 'bloat', ax = e.x + e.w / 2, ay = fly ? e.y + e.h / 2 : e.type === 'drip' && e.state !== 'crawl' ? e.y : e.y + e.h;
+  ctx.save(); ctx.translate(ax, ay); ctx.scale(e.sz, e.sz); ctx.translate(-ax, -ay); fn(e); ctx.restore();
+}
+function drawEnemy(e) { sizedDraw(e, drawEnemyBody); }
+function drawEnemyBody(e) {
   const pass = 'body'; const st = { t: e.t, dir: e.dir, flash: e.flash, wind: e.wind, spitT: e.spitT, elite: e.elite, state: e.state, vx: e.vx, vy: e.vy, grounded: e.grounded, charge: e.charge, chargeWind: e.chargeWind, time, pass };
   const cx = e.x + e.w / 2;
   if (e.type === 'murk') (e.elite ? DS.drawMurkling : DS.murkSlug)(ctx, cx, e.y + e.h, st);
@@ -2164,7 +2206,8 @@ function drawEnemy(e) {
   else if (e.type === 'wisp') drawWisp(e, pass);
   else if (e.type === 'bloat') drawBloat(e, pass);
 }
-function drawEnemyEyes(e) {
+function drawEnemyEyes(e) { sizedDraw(e, drawEnemyGlow); }
+function drawEnemyGlow(e) {
   const pass = 'glow'; const st = { t: e.t, dir: e.dir, flash: e.flash, wind: e.wind, spitT: e.spitT, elite: e.elite, state: e.state, vx: e.vx, vy: e.vy, grounded: e.grounded, charge: e.charge, chargeWind: e.chargeWind, time, pass };
   const cx = e.x + e.w / 2;
   if (e.type === 'murk') (e.elite ? DS.drawMurkling : DS.murkSlug)(ctx, cx, e.y + e.h, st);
@@ -2871,7 +2914,9 @@ const vecName = v => Object.keys(VEC).find(k => VEC[k][0] === v[0] && VEC[k][1] 
 const ED_FIELDS = {
   beacons: [{ k: 'final', l: 'Gold-rimmed beacon', type: 'check' }],
   enemies: [{ k: 't', l: 'Type', type: 'select', opts: [['murk', 'Murkling'], ['shell', 'Shellback'], ['wing', 'Gloomwing'], ['drip', 'Dripper'], ['crawler', 'Sand Crawler'], ['wisp', 'Frost Wisp'], ['bloat', 'Bloat']] },
-            { k: 'elite', l: 'Harder variant', type: 'check' }],
+            { k: 'elite', l: 'Harder variant', type: 'check' },
+            { k: 'size', l: 'Size', type: 'select', opts: [['normal', 'Normal'], ['small', 'Small'], ['big', 'Big']], get: o => o.size || (o.swarm > 1 ? 'small' : 'normal') },
+            { k: 'swarm', l: 'Swarm count', type: 'num' }],
   lore: [{ k: 'title', l: 'Title', type: 'text' }, { k: 'text', l: 'Text', type: 'area' }],
   upgrades: [{ k: 'kind', l: 'Kind', type: 'select', opts: [['fuel', 'Oil (fuel)'], ['mask', 'Mask (health)']] },
              { k: 'amt', l: 'Amount', type: 'num' }, { k: 'name', l: 'Name', type: 'text' }, { k: 'sealed', l: 'Sealed in darkglass', type: 'check' }],
@@ -3138,7 +3183,7 @@ function edIcon(b, sx, sy, ts) {
   else if (L === 'pools') { ctx.fillStyle = '#8a5ad0'; ctx.beginPath(); ctx.ellipse(cx, sy + ts * 0.85, s * 0.6, s * 0.25, 0, 0, 7); ctx.fill(); }
   else if (L === 'lore') disc('#6fd6d0', 'i');
   else if (L === 'upgrades') disc(o.kind === 'mask' ? '#a8dcff' : '#f2b347', o.kind === 'mask' ? '♥' : '+', o.sealed ? '#b48cff' : null);
-  else if (L === 'enemies') disc({ murk: '#9a6ad8', shell: '#8b93a8', wing: '#7a7ae0', drip: '#5ab0c0', crawler: '#c9a86a', wisp: '#bfe8ff', bloat: '#4fb07a' }[o.t], { murk: 'm', shell: 's', wing: 'w', drip: 'd', crawler: 'c', wisp: 'f', bloat: 'b' }[o.t], o.elite ? '#ff7ac8' : null);
+  else if (L === 'enemies') disc({ murk: '#9a6ad8', shell: '#8b93a8', wing: '#7a7ae0', drip: '#5ab0c0', crawler: '#c9a86a', wisp: '#bfe8ff', bloat: '#4fb07a' }[o.t], (l => (o.size === 'big' ? l.toUpperCase() : l) + (o.swarm > 1 ? o.swarm : ''))({ murk: 'm', shell: 's', wing: 'w', drip: 'd', crawler: 'c', wisp: 'f', bloat: 'b' }[o.t]), o.elite ? '#ff7ac8' : null);
   else if (L === 'tanks') {
     ctx.fillStyle = 'rgba(80,190,210,.35)'; ctx.fillRect(sx, sy, ts * o.w, ts * o.h);
     ctx.strokeStyle = '#9fe6f0'; ctx.lineWidth = 1.5; ctx.strokeRect(sx + 1, sy + 1, ts * o.w - 2, ts * o.h - 2);
