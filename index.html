@@ -75,6 +75,7 @@
   <div class="tb big" data-a="jump"  style="right:150px;bottom:18px">Jump</div>
   <div class="tb" data-a="interact"  style="right:160px;bottom:90px">E</div>
   <div class="tb" data-a="dash" id="tbDash" style="right:224px;bottom:34px;display:none">Step</div>
+  <div class="tb" data-a="hue" id="tbHue" style="right:226px;bottom:100px;display:none">Hue</div>
   <div class="tb" data-a="pause"     style="right:12px;top:10px;width:36px;height:36px">II</div>
 </div>
 
@@ -212,7 +213,7 @@ const saveTune = () => { try { localStorage.setItem(TKEY, JSON.stringify(T)); } 
    Core constants & helpers
    ===================================================================== */
 // Bump on every change so the deployed site can be checked at a glance (shown on title & pause).
-const VERSION = '0.29.0';
+const VERSION = '0.30.0';
 const TILE = 32, VW = 960, VH = 540, STEP = 1 / 120;
 const canvas = document.getElementById('game'), ctx = canvas.getContext('2d');
 const dark = document.createElement('canvas'), dctx = dark.getContext('2d');
@@ -231,7 +232,7 @@ function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Ma
    ===================================================================== */
 const ACTIONS = {
   left: ['ArrowLeft', 'KeyA'], right: ['ArrowRight', 'KeyD'], up: ['ArrowUp', 'KeyW'], down: ['ArrowDown', 'KeyS'],
-  jump: ['Space', 'KeyZ', 'KeyK'], flash: ['KeyX', 'KeyJ'], interact: ['KeyE', 'KeyC'], dash: ['ShiftLeft', 'ShiftRight', 'KeyL'],
+  jump: ['Space', 'KeyZ', 'KeyK'], flash: ['KeyX', 'KeyJ'], interact: ['KeyE', 'KeyC'], dash: ['ShiftLeft', 'ShiftRight', 'KeyL'], hue: ['KeyQ', 'KeyU'],
   pause: ['Escape', 'KeyP'], tune: ['KeyT'], start: ['Enter'],
 };
 const codeTo = {}; for (const a in ACTIONS) for (const c of ACTIONS[a]) codeTo[c] = a;
@@ -307,7 +308,7 @@ function pollPad() {
     const ax = gp.axes[0] || 0, ay = gp.axes[1] || 0, b = i => gp.buttons[i] && gp.buttons[i].pressed;
     now.left = ax < -0.4 || b(14); now.right = ax > 0.4 || b(15);
     now.up = ay < -0.5 || b(12); now.down = ay > 0.5 || b(13);
-    now.jump = b(0); now.flash = b(2); now.interact = b(3); now.dash = b(1) || b(5);
+    now.jump = b(0); now.flash = b(2); now.interact = b(3); now.dash = b(1) || b(5); now.hue = b(4);
     now.pause = b(9); now.start = b(9) || b(0);
   }
   for (const a in ACTIONS) { const v = !!now[a]; if (v && !pHeld[a]) pressed[a] = true; pHeld[a] = v; }
@@ -394,133 +395,151 @@ function shiftMap(m, dx, dy) {
   for (const k of ['beacons', 'lamps', 'pools', 'enemies', 'lore', 'upgrades', 'tanks', 'mirrors']) for (const o of m[k]) mv(o);
   for (const a of m.areas) { a.x0 += dx; a.x1 += dx; a.y0 += dy; a.y1 += dy; }
 }
-/* The outer ring, in world coordinates: five regions wrapped around the old world and linked to it
-   and to each other, so the map is a web of loops rather than a line. Tier (1-5) sets how dangerous an area is. */
+/* The outer ring, in world coordinates: five hand-built regions wrapped around the old world.
+   Progression: Flashstep (Hollows) opens the Grove → the Prism (Grove) melts colour seals → Updraft (Spires)
+   climbs into the Vents; the tide decides when the Abyss and the Vault's depths and heights can be reached. */
 function addOuterRegions(g, m) {
   const R = (x0, y0, x1, y1, c) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (y > 0 && y < H - 1 && x > 0 && x < W - 1) g[y][x] = c; };
   let seed = 90210; const rng = () => (seed = seed * 16807 % 2147483647) / 2147483647;
-  // staggered ledges every 3 rows (always a short hop from one row to the next), some left out
-  const ledges = (x0, y0, x1, floorY, dens) => {
-    for (let j = 1, y = floorY - 3; y >= y0 + 3; j++, y -= 3) for (let x = x0 + 2 + (j % 2) * 4; x + 3 <= x1 - 1; x += 8) {
-      if (rng() > dens) continue;
-      const a = x + Math.floor(rng() * 3) - 1, w = 2 + Math.floor(rng() * 3);
-      if (rng() < 0.12 && y + 2 < floorY) R(a, y, a + 1, y + 2, '#'); else R(a, y, a + w - 1, y, '#');   // mostly slabs, now and then a stub of rock
-    }
-  };
-  // a ragged roof and a lumpy floor for a hall, so it reads as a cave rather than a box
-  const rough = (x0, y0, x1, floorY) => {
-    let d = 0, b = 0;
-    for (let x = x0; x <= x1; x++) {
-      d = clamp(d + Math.floor(rng() * 3) - 1, 0, 3); if (d) R(x, y0, x, y0 + d - 1, '#');
-      if (b > 0) { b--; R(x, floorY - 1, x, floorY - 1, '#'); } else if (rng() < 0.05) b = 2 + Math.floor(rng() * 4);
-    }
-  };
-  // a rough lump of rock hanging in a hall
-  const blob = (cx, cy, rx, ry) => { for (let y = cy - ry; y <= cy + ry; y++) for (let x = cx - rx; x <= cx + rx; x++) { const k = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2; if (k < 0.75 + rng() * 0.35) R(x, y, x, y, '#'); } };
+  const L = list => { for (const [x0, y, x1] of list) R(x0, y, x1, y, '#'); };              // hand-placed ledges
+  const roof = (x0, y0, x1) => { let d = 0; for (let x = x0; x <= x1; x++) { d = clamp(d + Math.floor(rng() * 3) - 1, 0, 3); if (d) R(x, y0, x, y0 + d - 1, '#'); } };   // a ragged ceiling
+  const shroom = (x, capY, w, floorY) => { R(x - w, capY, x + w, capY, '#'); R(x, capY + 1, x, floorY - 1, '#'); };   // a glowcap: cap and stalk
   // a 4-wide shaft from an upper floor (yTop) down to a lower floor (yBot), with alternating ledges to climb
   const ladder = (x, yTop, yBot) => { R(x, yTop - 3, x + 3, yBot - 1, '.'); for (let y = yBot - 3, k = 0; y > yTop - 1; y -= 3, k++) R(x + (k % 2) * 2, y, x + 1 + (k % 2) * 2, y, '#'); };
   const E = (t, x, y, o) => m.enemies.push({ t, x, y, ...o });
   const A = (name, theme, tier, x0, y0, x1, y1) => m.areas.push({ name, theme, tier, x0, y0, x1, y1 });
+  m.tides = m.tides || [];
 
-  // ---- NORTH-WEST: Glowcap Grove — a fungal hall west of the Hollows and a canopy above it
-  R(4, 46, 134, 73, '.');                                      // the hall (floor row 74), open to the Hollows
-  R(135, 66, 149, 73, '.');
-  ledges(6, 46, 132, 74, 0.8); rough(4, 46, 132, 74); blob(88, 56, 6, 3);
-  R(30, 71, 36, 73, '#'); R(70, 72, 76, 73, '#'); R(50, 46, 52, 56, '#'); R(110, 46, 112, 54, '#');
-  R(8, 4, 127, 38, '.');                                       // the canopy (floor row 39)
-  ledges(10, 4, 125, 39, 0.8); rough(8, 4, 127, 39); blob(40, 14, 7, 4); blob(100, 22, 5, 3);
-  R(118, 36, 121, 36, '#'); R(122, 33, 125, 33, '#');          // steps up into the Spires
-  ladder(20, 39, 74); ladder(96, 39, 74);
-  ladder(120, 74, 114);                                        // down into the sky over the Bleached Dunes
-  // Rootway: a long root-shaft down the far west, from the Grove to the Drowned Vault, with a side door to the Dunes
-  ladder(4, 74, 171);
-  R(8, 104, 69, 107, '.');                                     // tunnel to the top of the Dunes bluff
-  m.beacons.push({ x: 40, gy: 74 }); m.lamps.push({ x: 108, gy: 74 }); m.pools.push({ x: 60, gy: 39 });
-  m.lore.push({ x: 62, gy: 74, title: "Keeper's Log XIV — Foxfire",
+  // ================= GLOWCAP GROVE (NW, tier 4) — through the Root Gate west of the Rime Hollows
+  R(128, 66, 149, 73, '.'); R(135, 74, 140, 76, '~');          // Root Gate: a tunnel with a black-water chasm only Flashstep crosses
+  R(8, 52, 127, 73, '.'); roof(8, 52, 127);                     // Mycelium Hall (floor 74) and the Heart Grotto at its west end
+  shroom(48, 71, 3, 74); shroom(56, 68, 3, 74); shroom(64, 71, 3, 74);     // a hill of glowcaps
+  R(76, 74, 85, 75, '~'); shroom(79, 72, 2, 76);                // a spore pool with a cap to hop across
+  R(100, 74, 103, 93, '.');                                     // a hole down into the sky over the Bleached Dunes (one way)
+  R(14, 71, 22, 73, '#'); R(28, 52, 30, 64, '#');               // the Prism's dais, and a curtain of root over the grotto
+  ladder(88, 39, 74);                                           // a root-shaft up to the canopy
+  R(8, 8, 127, 38, '.'); roof(8, 8, 127);                       // the Canopy (floor 39)
+  for (const [x, l] of [[20, 9], [47, 12], [61, 7], [75, 11], [104, 8], [114, 13]]) R(x, 8, x + 1, 8 + l, '#');   // hanging roots
+  L([[30, 36, 33], [35, 33, 38], [30, 30, 33], [35, 27, 38], [40, 24, 52]]);   // shelf fungi up to a high shelf
+  shroom(70, 35, 3, 39); shroom(96, 36, 2, 39);
+  L([[118, 36, 121], [122, 33, 125]]);                          // steps up into the Spires
+  ladder(4, 74, 171);                                           // Rootway: a long root-shaft down the far west to the Drowned Vault
+  R(8, 104, 69, 107, '.'); R(36, 108, 41, 110, '~');            //   with a side tunnel to the Dunes bluff, cut by a Flashstep trench
+  m.beacons.push({ x: 122, gy: 74 }); m.lamps.push({ x: 92, gy: 74 }, { x: 60, gy: 39 }); m.pools.push({ x: 110, gy: 74 });
+  m.lore.push({ x: 26, gy: 74, title: "Keeper's Log XX — The Prism",
+    text: "In 1666 Isaac Newton let a beam of sunlight through a glass prism and watched it fan out into a rainbow. White light, he showed, is every colour at once, and a prism bends each colour by a different amount.\nSome crystal down here was grown to answer one colour only. Split your light, and choose." },
+  { x: 44, gy: 39, title: "Keeper's Log XIV — Foxfire",
     text: "Rotting wood in old forests sometimes glows a faint green, a light called foxfire. It comes from fungi that burn their food with a chemical giving off light instead of heat: cold light, like a firefly's.\nThe caps here glow the same way. They feed on the dark, and so does what grazes on them." });
-  m.upgrades.push({ x: 64, gy: 39, kind: 'mask', amt: 1, name: 'Glowcap Wick' });
-  E('wing', 50, 60, { swarm: 5 }); E('murk', 82, 74, { size: 'big' }); E('murk', 100, 74, { swarm: 4 }); E('shell', 45, 74);
-  E('drip', 70, 46); E('drip', 126, 46); E('wing', 40, 20, { swarm: 4 }); E('wing', 90, 15, { size: 'big', elite: true });
-  E('murk', 80, 39, { swarm: 4 }); E('shell', 110, 39, { size: 'big' }); E('murk', 26, 39, { elite: true });
+  m.upgrades.push({ x: 18, gy: 71, kind: 'prism', amt: 1, name: 'Prism Lens' }, { x: 50, gy: 24, kind: 'mask', amt: 1, name: 'Glowcap Wick' });
+  E('murk', 18, 74, { size: 'big', elite: true }); E('murk', 38, 74, { swarm: 4 }); E('wing', 56, 60, { swarm: 5 }); E('shell', 70, 74);
+  E('murk', 108, 74, { swarm: 3 }); E('drip', 70, 52); E('drip', 116, 52);
+  E('wing', 85, 20, { size: 'big', elite: true }); E('murk', 84, 39, { swarm: 4 }); E('shell', 110, 39, { size: 'big' }); E('wing', 45, 16, { swarm: 3 });
   A('Rootway', 'grove', 4, 1, 74, 7, 140); A('Glowcap Grove', 'grove', 4, 1, 1, 134, 77);
 
-  // ---- NORTH: Windworn Spires — a long gallery over the Hollows, from the Grove canopy to the Vents
-  R(128, 4, 332, 30, '.');                                     // floor row 31
-  ledges(130, 4, 330, 31, 0.8); rough(128, 4, 332, 31); blob(225, 12, 8, 3); blob(310, 10, 5, 3);
-  for (const x of [160, 200, 250, 290]) { R(x, 22, x + 2, 30, '#'); R(x - 6, 28, x - 4, 28, '#'); R(x - 3, 25, x - 1, 25, '#'); R(x + 3, 25, x + 5, 25, '#'); R(x + 6, 28, x + 8, 28, '#'); }   // the spires, with steps up each side
-  R(210, 31, 240, 31, 'I');
-  ladder(239, 31, 74);                                         // down into the Rime Hollows
+  // ================= WINDWORN SPIRES (N, tier 4) — a long gallery over the Hollows, from the Canopy to the Vents
+  R(128, 4, 332, 30, '.'); roof(128, 4, 332);                   // floor row 31
+  for (const x of [160, 200, 250, 290]) { R(x, 22, x + 2, 30, '#'); L([[x - 6, 28, x - 4], [x - 3, 25, x - 1], [x + 3, 25, x + 5], [x + 6, 28, x + 8]]); }   // the spires
+  L([[205, 19, 211], [215, 19, 221], [225, 19, 231], [235, 19, 241], [244, 19, 247]]);   // a broken bridge between two spires
+  R(170, 31, 196, 31, 'I'); R(258, 31, 286, 31, 'I');
+  R(239, 28, 242, 73, '.');                                     // a drop into the Rime Hollows (one way back down)
+  R(322, 22, 332, 30, '#');                                     // the Vents' lip: nine tiles of sheer rock (Updraft and Flashstep together)
   m.beacons.push({ x: 140, gy: 31 }); m.lamps.push({ x: 226, gy: 31 });
-  m.lore.push({ x: 180, gy: 31, title: "Keeper's Log XV — Why the Sky Is Blue",
+  m.lore.push({ x: 228, gy: 19, title: "Keeper's Log XV — Why the Sky Is Blue",
     text: "Sunlight is every colour at once. Air scatters the short blue waves far more than the long red ones, so the whole sky glows blue, while a low sun, seen through more air, is left red and gold.\nUp here the air is thin and the sky goes almost black. What flies this high has learned to do without much light." });
   m.upgrades.push({ x: 251, gy: 22, kind: 'updraft', amt: 1, name: 'Updraft' });
-  E('wisp', 172, 14, { swarm: 5 }); E('wisp', 222, 12, { size: 'big' }); E('wing', 270, 14, { swarm: 4 }); E('shell', 272, 31, { size: 'big' });
-  E('murk', 305, 31, { swarm: 4 }); E('wing', 190, 22, { elite: true }); E('wisp', 315, 18, { elite: true }); E('murk', 230, 31, { size: 'big' });
+  E('wisp', 180, 14, { swarm: 5 }); E('wisp', 222, 10, { size: 'big' }); E('wing', 270, 14, { swarm: 4 }); E('shell', 272, 31, { size: 'big' });
+  E('murk', 305, 31, { swarm: 4 }); E('wing', 190, 22, { elite: true }); E('wisp', 315, 16, { elite: true }); E('murk', 150, 31, { swarm: 3 });
   A('Windworn Spires', 'spire', 4, 128, 1, 332, 33);
 
-  // ---- EAST: Cinder Vents — five stacked chambers down the east edge, touching the Spires, the Lamp Tower, Kelp Deep and the Abyss
-  R(333, 4, 396, 30, '.'); ledges(335, 4, 396, 31, 0.8); rough(336, 4, 396, 31);                       // V1 (floor 31)
-  R(336, 40, 396, 70, '.'); ledges(336, 40, 396, 71, 0.8); rough(336, 40, 396, 71);                    // V2 (floor 71)
-  R(336, 78, 396, 99, '.'); ledges(336, 78, 396, 100, 0.8);                   // V3 (floor 100)
-  R(328, 96, 335, 99, '.');                                                    //   door from the Lamp Tower
-  R(336, 110, 396, 151, '.'); ledges(336, 110, 396, 152, 0.8); rough(336, 110, 396, 152); blob(366, 128, 6, 4);                // V4 (floor 152)
-  R(317, 146, 335, 151, '.');                                                  //   tunnel from Kelp Deep
-  R(336, 162, 396, 196, '.'); ledges(336, 162, 396, 197, 0.8); rough(336, 162, 396, 197); blob(370, 175, 5, 3);                // V5 (floor 197)
+  // ================= CINDER VENTS (E, tier 5) — five chambers stacked down the east edge, sealed in red
+  R(333, 4, 396, 30, '.'); roof(333, 4, 396);                   // V1, the Flue (floor 31), over the Updraft lip
+  L([[344, 27, 349], [372, 26, 378]]); R(384, 18, 396, 30, '#'); L([[380, 27, 382], [377, 24, 379], [380, 21, 382]]);
+  R(336, 40, 396, 70, '.'); roof(336, 40, 396);                 // V2 (floor 71)
+  R(364, 60, 372, 61, '#'); L([[341, 67, 345], [388, 66, 392]]);
+  R(336, 54, 352, 55, '#'); R(386, 50, 396, 51, '#'); L([[355, 58, 357], [383, 54, 385]]);   // balconies
+  R(336, 78, 396, 99, '.'); roof(336, 78, 396);                 // V3 (floor 100), with a red-sealed door to the Lamp Tower
+  R(360, 96, 372, 99, '#'); R(364, 93, 368, 95, '#'); R(388, 88, 396, 99, '#'); L([[384, 96, 386], [384, 92, 385]]);
+  R(328, 96, 335, 99, '.'); R(333, 96, 334, 99, 'R');
+  R(336, 110, 396, 151, '.'); roof(336, 110, 396);              // V4 (floor 152), with a red-sealed tunnel to Kelp Deep
+  R(317, 146, 335, 151, '.'); R(333, 146, 334, 151, 'R');
+  R(360, 124, 372, 129, '#'); R(363, 130, 369, 131, '#'); L([[342, 140, 347], [376, 136, 381]]);
+  R(336, 131, 346, 132, '#'); R(375, 131, 396, 132, '#'); L([[349, 128, 351], [378, 128, 380]]);   // a broken mid-floor
+  R(336, 162, 396, 196, '.'); roof(336, 162, 396);              // V5 (floor 197), red-sealed from the Abyss
+  R(333, 185, 335, 196, '.'); R(333, 185, 334, 196, 'R');
+  R(352, 194, 358, 196, '#'); L([[366, 188, 371], [378, 184, 383]]); R(336, 176, 348, 177, '#'); R(342, 165, 344, 175, '#');
   ladder(360, 31, 71); ladder(380, 71, 100); ladder(350, 100, 152); ladder(386, 152, 197);
-  R(366, 68, 372, 70, '#'); R(342, 149, 346, 151, '#'); R(352, 194, 360, 196, '#');
-  m.beacons.push({ x: 342, gy: 100 }); m.lamps.push({ x: 372, gy: 152 }); m.pools.push({ x: 390, gy: 71 }, { x: 372, gy: 197 });
+  m.beacons.push({ x: 342, gy: 100 }); m.lamps.push({ x: 372, gy: 152 }); m.pools.push({ x: 392, gy: 71 }, { x: 374, gy: 197 });
   m.lore.push({ x: 350, gy: 71, title: "Keeper's Log XVI — Red Hot",
-    text: "Heat anything enough and it glows: dull red first, then orange, yellow, and at last white. Smiths judged a blade's heat by its colour long before thermometers; the colour of a glow tells you how hot it is.\nThese vents burn red. What lives here has grown thick skin against the heat, and against light." });
+    text: "Heat anything enough and it glows: dull red first, then orange, yellow, and at last white. Smiths judged a blade's heat by its colour long before thermometers; the colour of a glow tells you how hot it is.\nThese vents burn red. What lives here has grown a skin of red light against everything else." });
   m.upgrades.push({ x: 393, gy: 197, kind: 'mask', amt: 1, name: 'Cinder Wick' });
-  E('wing', 355, 15, { swarm: 5 }); E('murk', 380, 31, { size: 'big', elite: true }); E('shell', 345, 71, { size: 'big', elite: true }); E('murk', 375, 71, { swarm: 5 });
-  E('drip', 360, 78); E('drip', 390, 78); E('wing', 370, 88, { size: 'big', elite: true }); E('murk', 360, 100, { swarm: 4 }); E('shell', 385, 100, { elite: true });
-  E('bloat', 360, 125, { size: 'big', elite: true }); E('wing', 380, 135, { swarm: 5 }); E('murk', 345, 152, { size: 'big', elite: true }); E('shell', 392, 152, { elite: true });
-  E('murk', 372, 197, { swarm: 6 }); E('shell', 380, 197, { size: 'big', elite: true }); E('bloat', 350, 178, { swarm: 4 }); E('wing', 390, 175, { elite: true });
+  E('wing', 355, 15, { swarm: 4 }); E('murk', 380, 31, { size: 'big', elite: true, hue: 'red' });
+  E('shell', 345, 71, { size: 'big', elite: true }); E('murk', 375, 71, { swarm: 4, hue: 'red' });
+  E('drip', 360, 78); E('drip', 390, 78); E('wing', 370, 88, { elite: true, hue: 'red' }); E('murk', 360, 100, { swarm: 4 }); E('shell', 385, 100, { elite: true, hue: 'red' });
+  E('bloat', 352, 120, { size: 'big', elite: true }); E('wing', 380, 130, { swarm: 4, hue: 'red' }); E('murk', 345, 152, { size: 'big', elite: true, hue: 'red' }); E('shell', 392, 152, { elite: true });
+  E('murk', 368, 197, { swarm: 5 }); E('shell', 382, 197, { size: 'big', elite: true, hue: 'red' }); E('wing', 390, 175, { elite: true });
   A('Cinder Vents', 'ember', 5, 333, 1, 398, 198);
 
-  // ---- SOUTH: The Abyss — under Kelp Deep, opening east into the Vents and west into the Vault
-  R(204, 168, 335, 196, '.'); ledges(206, 168, 330, 197, 0.8); rough(204, 168, 332, 197); blob(232, 176, 6, 3); blob(296, 182, 7, 3);                 // floor row 197
-  ladder(271, 161, 197);                                                         // down through the floor of Kelp Deep
-  R(230, 197, 234, 198, '~'); R(292, 197, 297, 198, '~'); R(250, 168, 252, 180, '#'); R(310, 168, 312, 178, '#');
-  m.beacons.push({ x: 262, gy: 197 }); m.lamps.push({ x: 318, gy: 197 });
+  // ================= THE ABYSS (S, tier 5) — under Kelp Deep; its shaft is only open at low tide
+  R(204, 168, 332, 196, '.'); roof(204, 168, 332);              // floor row 197
+  R(236, 168, 239, 186, '#'); R(262, 168, 265, 184, '#'); R(300, 168, 303, 186, '#');   // ribs of rock hanging from the dark
+  R(246, 197, 250, 198, '~'); R(284, 197, 288, 198, '~');
+  R(213, 194, 220, 196, '#'); R(276, 193, 281, 196, '#'); R(306, 194, 310, 196, '#'); R(224, 189, 232, 190, '#'); R(290, 186, 296, 187, '#');
+  ladder(271, 161, 197); R(271, 164, 274, 164, 'B');            // down through the floor of Kelp Deep, past a blue seal
+  L([[322, 194, 325], [316, 191, 319], [322, 188, 325], [312, 182, 319]]);   // a climb whose last step needs an ability
+  m.beacons.push({ x: 258, gy: 197 }); m.lamps.push({ x: 294, gy: 197 });
   m.lore.push({ x: 222, gy: 197, title: "Keeper's Log XVIII — The Midnight Zone",
-    text: "Sea water swallows red light within a few metres, and a thousand metres down no sunlight is left at all. Below that lies the midnight zone, where the only light is the glow of living things.\nYour lantern is the brightest thing that has ever come down here. Everything has seen it." });
-  m.upgrades.push({ x: 305, gy: 197, kind: 'power', amt: 20, name: 'Lens Shard' });
-  E('bloat', 240, 180, { swarm: 6 }); E('bloat', 285, 178, { size: 'big', elite: true }); E('murk', 245, 197, { swarm: 5 }); E('shell', 280, 197, { size: 'big', elite: true });
-  E('drip', 225, 168); E('drip', 300, 168); E('wing', 320, 180, { swarm: 4 }); E('murk', 300, 197, { size: 'big', elite: true }); E('bloat', 215, 185, { elite: true });
+    text: "Sea water swallows red light within a few metres, and a thousand metres down no sunlight is left at all. Below that lies the midnight zone, where the only light is the glow of living things — and most of it is blue.\nYour lantern is the brightest thing that has ever come down here. Everything has seen it." });
+  m.upgrades.push({ x: 315, gy: 182, kind: 'power', amt: 20, name: 'Lens Shard' });
+  E('bloat', 228, 180, { swarm: 5 }); E('bloat', 284, 178, { size: 'big', elite: true, hue: 'blue' }); E('murk', 245, 196 + 1, { swarm: 4, hue: 'blue' });
+  E('shell', 268, 197, { size: 'big', elite: true }); E('drip', 222, 168); E('drip', 290, 168); E('wing', 318, 176, { swarm: 3, hue: 'blue' });
+  E('murk', 310, 197, { size: 'big', elite: true, hue: 'blue' }); E('bloat', 212, 186, { elite: true });
   A('The Abyss', 'abyss', 5, 204, 166, 332, 198);
 
-  // ---- SOUTH-WEST: Drowned Vault — the keepers' archive under the Buried Ruins, joined to the Rootway, Kelp Deep and the Abyss
-  R(8, 140, 203, 170, '.'); ledges(8, 140, 203, 171, 0.8); rough(8, 140, 203, 171); blob(20, 150, 6, 4); blob(115, 155, 9, 4); blob(185, 150, 5, 3);                     // upper hall (floor 171)
-  R(8, 178, 203, 196, '.'); ledges(8, 178, 203, 197, 0.8); rough(8, 178, 203, 197); blob(80, 186, 7, 3); blob(160, 186, 6, 3);                     // lower stacks (floor 197)
-  R(204, 152, 215, 160, '.');                                                    // passage from Kelp Deep
-  R(196, 161, 203, 161, '#'); R(190, 164, 194, 164, '#'); R(196, 167, 199, 167, '#');   // steps down from it
-  ladder(100, 131, 171);                                                         // down through the Ruins floor
+  // ================= DROWNED VAULT (SW, tier 4) — the keepers' tidal archive under the Buried Ruins
+  R(8, 140, 203, 170, '.'); roof(8, 140, 203);                  // the Reading Rooms (floor 171), four rooms between hanging stacks
+  for (const x of [55, 105, 155]) R(x, 140, x + 2, 162, '#');
+  L([[20, 149, 30], [70, 149, 80], [116, 149, 126], [170, 149, 180]]);   // shelves only the high tide can lift you to
+  R(60, 171, 66, 172, 'S');
+  for (const x of [14, 36, 88, 128, 166, 190]) R(x, 169, x + 4, 170, '#');                        // reading desks
+  R(20, 162, 44, 162, '#'); L([[10, 165, 13]]); R(170, 160, 192, 160, '#'); L([[194, 163, 197]]);   // galleries
+  R(8, 178, 203, 196, '.'); roof(8, 178, 203);                  // the Stacks below (floor 197): down the ladders, at low tide only
+  for (const x of [40, 90, 140]) R(x, 178, x + 1, 189, '#');
+  for (const x of [20, 66, 112, 160]) R(x, 193, x + 6, 196, '#');                                  // fallen shelving
+  R(92, 197, 97, 198, '~'); R(142, 197, 147, 198, '~');
   ladder(50, 171, 197); ladder(180, 171, 197);
-  for (const x of [40, 80, 130, 160]) R(x, 140, x + 2, 152, '#');               // shelves hanging from the roof
-  R(60, 171, 66, 172, 'S'); R(90, 197, 95, 198, '~'); R(140, 197, 146, 198, '~');
-  m.beacons.push({ x: 30, gy: 171 }); m.lamps.push({ x: 150, gy: 171 }); m.pools.push({ x: 120, gy: 171 });
-  m.lore.push({ x: 116, gy: 197, title: "Keeper's Log XVII — The Dark Room",
+  R(202, 178, 203, 196, 'B');                                   // the Stacks' far door to the Abyss, sealed blue
+  R(204, 166, 205, 177, '#');                                   // (rock between the Reading Rooms and the Abyss)
+  ladder(100, 131, 171); R(100, 133, 103, 133, 'B');            // from the Buried Ruins floor, through a blue seal
+  R(204, 152, 215, 160, '.'); R(212, 152, 213, 160, 'B');       // from Kelp Deep, through a blue seal
+  L([[196, 161, 203], [190, 164, 194], [196, 167, 199]]);
+  m.tides.push({ x0: 8, y0: 136, x1: 203, y1: 197, low: 198, high: 150 });
+  m.beacons.push({ x: 30, gy: 171 }); m.lamps.push({ x: 140, gy: 171 }, { x: 116, gy: 197 }); m.pools.push({ x: 75, gy: 171 });
+  m.lore.push({ x: 130, gy: 171, title: "Keeper's Log XIX — Tides",
+    text: "The Moon's gravity pulls the ocean into a bulge on the side of the Earth facing it, and another on the far side. As the Earth turns through them, most coasts get two high tides and two low tides a day.\nThe keepers shelved their best charts high, where only the tide could carry them. Wait for the water, and let it lift you." },
+  { x: 120, gy: 197, title: "Keeper's Log XVII — The Dark Room",
     text: "Let light into a dark room through one small hole and an upside-down picture of the world outside appears on the far wall. Artists traced pictures this way for centuries; it is how every camera, and every eye, works.\nThe keepers stored their charts down here, in the dark, where nothing could fade them." });
-  m.upgrades.push({ x: 12, gy: 197, kind: 'mask', amt: 1, name: 'Archive Wick' });
-  E('shell', 70, 171, { size: 'big' }); E('murk', 110, 171, { swarm: 4 }); E('crawler', 63, 171, { swarm: 3 }); E('drip', 60, 140); E('drip', 170, 140);
-  E('wing', 140, 155, { swarm: 4 }); E('murk', 175, 171, { elite: true }); E('murk', 30, 197, { swarm: 5 }); E('shell', 70, 197, { elite: true });
-  E('bloat', 120, 186, { size: 'big' }); E('murk', 165, 197, { size: 'big', elite: true }); E('wing', 190, 185, { elite: true });
+  m.upgrades.push({ x: 121, gy: 149, kind: 'mask', amt: 1, name: 'Archive Wick' });
+  E('shell', 80, 171, { size: 'big' }); E('murk', 100, 171, { swarm: 4 }); E('crawler', 63, 171, { swarm: 3 }); E('drip', 70, 140); E('drip', 170, 140);
+  E('wing', 130, 158, { swarm: 4 }); E('murk', 180, 171, { elite: true, hue: 'blue' }); E('murk', 30, 197, { swarm: 5 }); E('shell', 80, 197, { elite: true, hue: 'blue' });
+  E('bloat', 125, 186, { size: 'big' }); E('murk', 176, 197, { size: 'big', elite: true }); E('wing', 190, 185, { elite: true, hue: 'blue' });
   A('Drowned Vault', 'vault', 4, 8, 136, 203, 198);
 
-  // Objects stand on the floor: clear any lump rough() left on top of them
+  // ================= KELP DEEP is tidal too: at high tide its shaft to the Abyss lies underwater
+  m.tides.push({ x0: 216, y0: 134, x1: 316, y1: 165, low: 162, high: 145 });
+
+  // Objects stand on the floor: clear any rock left on top of them
   for (const k of ['beacons', 'lamps', 'pools', 'lore', 'upgrades']) for (const o of m[k]) {
     if (o.y != null || !(o.gy > 0)) continue;
     for (let dx = -1; dx <= 1; dx++) { const x = o.x + dx; if (g[o.gy - 1][x] === '#' && g[o.gy][x] !== '.' && (dx === 0 || g[o.gy - 2][x] === '.')) g[o.gy - 1][x] = '.'; }
   }
 
   // ---- Secrets that need the new abilities
-  // Frost Loft (Updraft): off the east end of the Rime Hollows, a ledge five tiles up a sheer wall
-  R(244, 62, 262, 73, '.'); R(243, 71, 243, 73, '.'); R(256, 69, 262, 73, '#');   // only a low doorway from the ladder
+  // Frost Loft (Updraft or Flashstep): off the east end of the Rime Hollows, a ledge five tiles up a sheer wall
+  R(244, 62, 262, 73, '.'); R(243, 71, 243, 73, '.'); R(256, 69, 262, 73, '#');   // only a low doorway from the shaft
   m.upgrades.push({ x: 260, gy: 69, kind: 'power', amt: 20, name: 'Lens Shard' });
   E('wisp', 250, 66, { elite: true });
   A('Frost Loft', 'ice', 3, 243, 60, 262, 74);
-  // Flooded Annex (Ember Dash): past the crystal door, a trench too wide to jump
+  // Flooded Annex (Flashstep or Updraft): past the crystal door, a trench too wide to jump
   R(260, 104, 284, 113, '.'); R(266, 114, 271, 115, '~'); R(280, 110, 284, 113, '#');
   m.upgrades.push({ x: 277, gy: 114, kind: 'power', amt: 20, name: 'Lens Shard' });
   E('wing', 276, 107, { elite: true });
@@ -607,13 +626,13 @@ function customMap() { try { const m = JSON.parse(localStorage.getItem(MAP_KEY) 
 function currentMap() { return customMap() || OFFICIAL; }
 function loadMap(m) {
   grid = [];
-  for (let y = 0; y < H; y++) { const row = (m.rows[y] || '').padEnd(W, '#').slice(0, W).split(''); grid.push(row.map(c => '#.~=GDSI'.includes(c) ? c : c === 'w' ? '.' : '#')); }
+  for (let y = 0; y < H; y++) { const row = (m.rows[y] || '').padEnd(W, '#').slice(0, W).split(''); grid.push(row.map(c => '#.~=GDSIRB'.includes(c) ? c : c === 'w' ? '.' : '#')); }
   for (let x = 0; x < W; x++) { grid[0][x] = grid[H - 1][x] = '#'; }
   for (let y = 0; y < H; y++) { grid[y][0] = grid[y][W - 1] = '#'; }
   SPAWN = { x: m.spawn.x * TILE + 7, y: m.spawn.gy * TILE - 28 };
   BEACON_DEF = clone(m.beacons || []); LAMP_DEF = clone(m.lamps || []); POOL_DEF = clone(m.pools || []);
   ENEMY_DEF = clone(m.enemies || []); LORE = clone(m.lore || []); UPG_DEF = clone(m.upgrades || []);
-  TANK_DEF = clone(m.tanks || []); MIRROR_DEF = clone(m.mirrors || []); AREAS = clone(m.areas || []);
+  TANK_DEF = clone(m.tanks || []); MIRROR_DEF = clone(m.mirrors || []); AREAS = clone(m.areas || []); TIDE_DEF = clone(m.tides || []);
   SRC = m.src ? { ...m.src } : { x: -5, y: -5 }; CRY = m.cry ? { ...m.cry } : { x: -5, y: -5 };
   for (const t of TANK_DEF) for (let y = t.y; y < t.y + t.h; y++) for (let x = t.x; x < t.x + t.w; x++) if (grid[y] && x > 0 && x < W - 1) grid[y][x] = 'w';
   // door bounds
@@ -624,8 +643,8 @@ function loadMap(m) {
   }
 }
 const tileAt = (x, y) => (x < 0 || x >= W || y < 0 || y >= H) ? '#' : grid[y][x];
-const isSolid = (x, y) => { const c = tileAt(x, y); return c === '#' || c === 'D' || c === 'G' || c === 'w' || c === 'I'; };
-const blocksLight = (x, y) => { const c = tileAt(x, y); return c === '#' || c === 'D' || c === 'G' || c === 'I'; };
+const isSolid = (x, y) => { const c = tileAt(x, y); return c === '#' || c === 'D' || c === 'G' || c === 'w' || c === 'I' || c === 'R' || c === 'B'; };
+const blocksLight = (x, y) => { const c = tileAt(x, y); return c === '#' || c === 'D' || c === 'G' || c === 'I' || c === 'R' || c === 'B'; };
 /* Water glass: tanks bend the lantern's light. A prism tank turns it toward its base; a lens bowl
    gathers it to a focal point. Darkglass ('G') shrugs off diffuse light but shatters under a focus. */
 let TANK_DEF = [
@@ -640,10 +659,12 @@ function buildGlass() {
   tanks = TANK_DEF.map(d => ({ ...d, lit: 0, F: null, inDir: [0, 0], shimmer: 0 }));
   seals = []; const seen = new Set();
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    if (grid[y][x] !== 'G' || seen.has(x + ',' + y)) continue;
-    const sl = { tiles: [], crack: 0, broken: false, hits: 0, glance: 0 }, q = [[x, y]]; seen.add(x + ',' + y);
+    const ch = grid[y][x];
+    if ((ch !== 'G' && ch !== 'R' && ch !== 'B') || seen.has(x + ',' + y)) continue;
+    // G = darkglass (needs a focus); R / B = colour seals (dissolve only under red / blue light)
+    const sl = { kind: ch === 'G' ? 'G' : ch === 'R' ? 'red' : 'blue', tiles: [], crack: 0, broken: false, hits: 0, glance: 0 }, q = [[x, y]]; seen.add(x + ',' + y);
     while (q.length) { const [cx, cy] = q.pop(); sl.tiles.push([cx, cy]);
-      for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) if (tileAt(nx, ny) === 'G' && !seen.has(nx + ',' + ny)) { seen.add(nx + ',' + ny); q.push([nx, ny]); } }
+      for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) if (tileAt(nx, ny) === ch && !seen.has(nx + ',' + ny)) { seen.add(nx + ',' + ny); q.push([nx, ny]); } }
     seals.push(sl);
   }
 }
@@ -695,9 +716,16 @@ let UPG_DEF = [
   { x: 167, gy: 24, kind: 'mask', amt: 1, name: 'Glass Heart', sealed: true },   // rests on the ceiling seal; drifts down when freed
 ];
 let upgs = [];
-const freshUpgrades = () => ({ got: new Set(), fuel: 0, masks: 0, power: 0, range: 0, wide: 0, dash: false, updraft: false });
+const freshUpgrades = () => ({ got: new Set(), fuel: 0, masks: 0, power: 0, range: 0, wide: 0, dash: false, updraft: false, prism: false, hue: 'white' });
 let upgrades = freshUpgrades();
-const beamRangeNow = () => T.beamRange + upgrades.range, beamHalfNow = () => T.beamHalfAngle + upgrades.wide, beamPower = () => 1 + upgrades.power / 100;
+/* Prism colours: red light carries furthest (as in water and haze); blue spreads wide and bites hard up close. */
+const HUES = {
+  white: { rng: 1, half: 1, pow: 1, t1: 'rgb(150,132,104)', t2: 'rgb(255,214,150)', col: '#ffe3a1' },
+  red:   { rng: 1.35, half: 0.85, pow: 0.85, t1: 'rgb(170,92,76)', t2: 'rgb(255,120,92)', col: '#ff8a6a' },
+  blue:  { rng: 0.8, half: 1.5, pow: 1.15, t1: 'rgb(92,116,170)', t2: 'rgb(140,182,255)', col: '#8ab8ff' },
+};
+const hueNow = () => HUES[upgrades.hue] || HUES.white;
+const beamRangeNow = () => (T.beamRange + upgrades.range) * hueNow().rng, beamHalfNow = () => (T.beamHalfAngle + upgrades.wide) * hueNow().half, beamPower = () => (1 + upgrades.power / 100) * hueNow().pow;
 // What each kind of find does, and how the reveal screen describes it
 const UPG_KINDS = {
   fuel:    { head: 'Lantern upgrade found', desc: 'Your lantern holds more oil. The beam burns longer.' },
@@ -707,16 +735,37 @@ const UPG_KINDS = {
   wide:    { head: 'Lantern upgrade found', desc: 'A wide-angle lens. Your beam spreads wider.', stat: ['Beam width', v => Math.round(v) + '°'] },
   dash:    { head: 'Ability found', desc: 'Step through your own light: blink to where you aim. Walls stop you; once per jump.', hint: 'Shift / L  ·  Step button  (aims with the beam)' },
   updraft: { head: 'Ability found', desc: 'Flare the lantern downward to jump again in mid-air. Costs a little oil.', hint: 'Jump again while in the air' },
+  prism:   { head: 'Ability found', desc: 'Split your light: red reaches far, blue burns wide. Colour seals and shielded foes answer to their own hue.', hint: 'Q / U  ·  Hue button  (white → red → blue)' },
 };
-const upgStatNow = k => k === 'mask' ? P.maxMasks : k === 'fuel' ? P.maxFuel : k === 'power' ? 100 * beamPower() : k === 'range' ? beamRangeNow() : k === 'wide' ? beamHalfNow() * 2 : 0;
-function syncAbilityUI() { const b = document.getElementById('tbDash'); if (b) b.style.display = upgrades.dash ? '' : 'none'; }
+const upgStatNow = k => k === 'prism' ? 0 : k === 'mask' ? P.maxMasks : k === 'fuel' ? P.maxFuel : k === 'power' ? 100 * beamPower() : k === 'range' ? beamRangeNow() : k === 'wide' ? beamHalfNow() * 2 : 0;
+function syncAbilityUI() { const b = document.getElementById('tbDash'), h = document.getElementById('tbHue'); if (b) b.style.display = upgrades.dash ? '' : 'none'; if (h) h.style.display = upgrades.prism ? '' : 'none'; }
 
 /* =====================================================================
    World state
    ===================================================================== */
-let seenBurnout = false;
+let seenBurnout = false, seenShield = false;
 let reveal = null, areaName = '', areaCard = null, visited = new Set();
 let seen = new Uint8Array(W * H), seenT = 0, travel = null, travelFx = null, chartDirty = true;
+/* Tides: tidal basins flood and drain on one shared clock. Below the surface you float — you can't dive —
+   so high water lifts you to high places and low water opens the deep ways. */
+let TIDE_DEF = [], tideClock = 0, tideState = 'low', seenTide = false;
+const TIDE = { low: 55, rise: 18, high: 55, fall: 18 };
+const TIDE_PERIOD = TIDE.low + TIDE.rise + TIDE.high + TIDE.fall;
+function tideFrac() {
+  const t = tideClock % TIDE_PERIOD;
+  if (t < TIDE.low) return 0;
+  if (t < TIDE.low + TIDE.rise) return (t - TIDE.low) / TIDE.rise;
+  if (t < TIDE.low + TIDE.rise + TIDE.high) return 1;
+  return 1 - (t - TIDE.low - TIDE.rise - TIDE.high) / TIDE.fall;
+}
+const tidePhase = () => { const t = tideClock % TIDE_PERIOD; return t < TIDE.low ? 'low' : t < TIDE.low + TIDE.rise ? 'rising' : t < TIDE.low + TIDE.rise + TIDE.high ? 'high' : 'ebbing'; };
+const basinAt = (tx, ty) => { for (const b of TIDE_DEF) if (tx >= b.x0 && tx <= b.x1 && ty >= b.y0 && ty <= b.y1) return b; return null; };
+const tideSurfaceY = b => (b.low + (b.high - b.low) * tideFrac()) * TILE;     // px; water fills below this line
+function waterSurfaceAt(px, py) {               // the surface over a point under tide water, or null
+  const tx = Math.floor(px / TILE), ty = Math.floor(py / TILE), b = basinAt(tx, ty);
+  if (!b || isSolid(tx, ty)) return null;
+  const s = tideSurfaceY(b); return py > s ? s : null;
+}
 function markSeen(px, py, r) {          // chart every tile within r px of a point
   const t0 = Math.floor((px - r) / TILE), t1 = Math.floor((px + r) / TILE), u0 = Math.floor((py - r) / TILE), u1 = Math.floor((py + r) / TILE), r2 = (r / TILE + 0.5) ** 2;
   for (let ty = Math.max(0, u0); ty <= Math.min(H - 1, u1); ty++) for (let tx = Math.max(0, t0); tx <= Math.min(W - 1, t1); tx++)
@@ -786,7 +835,7 @@ function makePlacedRaw(d, i, k = 0) {   // an enemy from the map, remembering it
   const S = SIZES[size] || SIZES.normal, h = Math.round(ETYPES[d.t].h * S.sz), fly = d.t === 'wing' || d.t === 'wisp' || d.t === 'bloat';
   const cx = (d.x + 0.5 + (k - (n - 1) / 2) * (fly ? 1.1 : 0.8)) * TILE, oy = fly && n > 1 ? ((k * 7) % 3 - 1) * 0.6 * TILE : 0;
   const tr = tierAt(cx, d.y * TILE), el = tr > 1 && (!!d.elite || hash01(i * 31 + k * 7) < TIER.promote[tr]);   // the start stays gentle; the edges promote some
-  const home = { def: i, mem: k, deadT: 0, size };
+  const home = { def: i, mem: k, deadT: 0, size, hue: d.hue === 'red' || d.hue === 'blue' ? d.hue : null };
   if (d.t === 'wing') return makeEnemy('wing', cx, (d.y + 0.5) * TILE - h / 2 + oy, { state: 'hover', elite: el, ...home });
   if (d.t === 'drip') return makeEnemy('drip', cx, d.y * TILE, { state: 'hang', ...home });
   if (d.t === 'wisp' || d.t === 'bloat') return makeEnemy(d.t, cx, (d.y + 0.5) * TILE - h / 2 + oy, { state: 'hover', elite: el, ...home });
@@ -959,7 +1008,7 @@ function newGame() {
   hidden = [];
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (grid[y][x] === '=') hidden.push({ x, y, a: 0, lit: false });
   upgrades = freshUpgrades(); syncAbilityUI();
-  P = newPlayer(); logOpen = null; areaName = ''; areaCard = null; visited = new Set(); seen = new Uint8Array(W * H); chartDirty = true; travel = null; travelFx = null;
+  P = newPlayer(); logOpen = null; areaName = ''; areaCard = null; visited = new Set(); seen = new Uint8Array(W * H); chartDirty = true; tideClock = 0; tideState = 'low'; seenTide = false; travel = null; travelFx = null;
   buildGlass(); upgs = UPG_DEF.map((u, i) => ({ ...u, i, px: (u.x + 0.5) * TILE, py: u.gy * TILE - 14, free: !u.sealed, vy: 0 }));
   beacons = BEACON_DEF.map(d => ({ x: d.x, gy: d.gy, lit: false, final: !!d.final, glow: 0, near: false }));
   nameBeacons();
@@ -1061,7 +1110,7 @@ function updateBeamRays(p) {
         if (t) { if (!s.used.includes(t)) { tk = t; break; } continue; }
         if (blocksLight(tx, ty)) {
           const sl = sealAt(tx, ty);
-          if (sl) { if (s.via && s.via.kind === 'lens') sl.hits++; else sl.glance++; }
+          if (sl) { if (sl.kind === 'G' ? s.via && s.via.kind === 'lens' : sl.kind === upgrades.hue) sl.hits++; else sl.glance++; }
           break;
         }
       }
@@ -1107,22 +1156,24 @@ function tickGlass(dt) {
   }
   for (const sl of seals) {
     if (sl.broken) continue;
-    const focused = P.beamOn && sl.hits >= T.focusRays;
+    const glass = sl.kind === 'G', SC = SEAL_COL[sl.kind];
+    const focused = P.beamOn && sl.hits >= (glass ? T.focusRays : 3);
     if (focused) {
-      sl.crack += dt / T.glassCrackTime; addShake(1.2 + 2 * sl.crack);
+      sl.crack += dt / (glass ? T.glassCrackTime : 1.1); addShake(1.2 + 2 * sl.crack);
       const [tx, ty] = sl.tiles[Math.floor(Math.random() * sl.tiles.length)];
-      if (Math.random() < dt * 30) burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 1, { color: '#e9e0ff', add: true, smin: 40, smax: 160, lmin: 0.15, lmax: 0.35 });
+      if (Math.random() < dt * 30) burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 1, { color: SC.spark, add: true, smin: 40, smax: 160, lmin: 0.15, lmax: 0.35 });
     } else {
       sl.crack = Math.max(0, sl.crack - dt * 0.6);
-      // Diffuse light skitters off darkglass: a visual tell, no words.
-      if (P.beamOn && sl.glance && Math.random() < dt * 14) { const [tx, ty] = sl.tiles[Math.floor(Math.random() * sl.tiles.length)]; burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 1, { color: '#a99ad8', add: true, smin: 20, smax: 70, lmin: 0.1, lmax: 0.2 }); }
+      // The wrong light skitters off: a visual tell, no words.
+      if (P.beamOn && sl.glance && Math.random() < dt * 14) { const [tx, ty] = sl.tiles[Math.floor(Math.random() * sl.tiles.length)]; burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 1, { color: SC.glance, add: true, smin: 20, smax: 70, lmin: 0.1, lmax: 0.2 }); }
+      if (!glass && P.beamOn && sl.glance && !sl.told) { sl.told = true; toast(upgrades.prism ? `This crystal answers only to ${sl.kind} light.` : 'The crystal drinks your light. It wants a colour.', 2.8); }
     }
     if (sl.crack >= 1) {
       sl.broken = true; freeze = Math.max(freeze, 0.12); addShake(9);
       for (const [tx, ty] of sl.tiles) {
         grid[ty][tx] = '.';
-        burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 16, { color: '#2a2140', smin: 60, smax: 260, lmin: 0.4, lmax: 0.9, zmin: 2, zmax: 5, g: 500 });
-        burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 10, { color: '#d9ccff', add: true, smin: 80, smax: 300, lmin: 0.2, lmax: 0.5 });
+        burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 16, { color: SEAL_COL[sl.kind].shard, smin: 60, smax: 260, lmin: 0.4, lmax: 0.9, zmin: 2, zmax: 5, g: 500 });
+        burst((tx + 0.5) * TILE, (ty + 0.5) * TILE, 10, { color: SEAL_COL[sl.kind].spark, add: true, smin: 80, smax: 300, lmin: 0.2, lmax: 0.5 });
       }
       for (const u of upgs) if (!u.free && sl.tiles.some(([x, y]) => x === u.x && y === u.gy)) { u.free = true; u.vy = 0; }
     }
@@ -1242,6 +1293,11 @@ function respawnAtCheckpoint() {
 }
 function burnEnemy(e, p, dt, hit) {
   const ang = hit.ang, dx = Math.cos(ang), dy = Math.sin(ang), lim = T.beamKnock * (e.kb ?? 1);
+  if (e.hue && e.hue !== upgrades.hue) {                         // a hue-shielded foe shrugs off every other light
+    if (Math.random() < dt * 24) burst(e.x + e.w / 2 - dx * e.w * 0.5, e.y + e.h / 2 - dy * e.h * 0.5, 1, { color: HUES[e.hue].col, add: true, ang: ang + Math.PI, spread: 1, smin: 40, smax: 160, lmin: 0.1, lmax: 0.25 });
+    if (!seenShield) { seenShield = true; toast(upgrades.prism ? `A ${e.hue}-shielded foe: only ${e.hue} light can burn it.` : 'Your light slides off its shell of colour.', 2.8); }
+    return;
+  }
   // Shellback: light striking its face glances off the shell. Burn it from behind or from above —
   // or pierce it with a focused point of light.
   if (e.type === 'shell' && !hit.focus && dy < 0.75 && Math.sign(dx) === -e.dir) {
@@ -1320,6 +1376,10 @@ function tickPlayer(dt) {
   const L = isHeld('left'), Rt = isHeld('right'), U = isHeld('up'), D = isHeld('down'), JH = isHeld('jump');
   let ix = (Rt ? 1 : 0) - (L ? 1 : 0);
   const jumpNow = take('jump'), dashNow = take('dash');
+  if (take('hue') && upgrades.prism) {                         // turn the prism: white → red → blue
+    upgrades.hue = { white: 'red', red: 'blue', blue: 'white' }[upgrades.hue] || 'white';
+    const o = beamOrigin(p); burst(o.x, o.y, 10, { color: hueNow().col, add: true, smin: 30, smax: 120, lmin: 0.2, lmax: 0.4 });
+  }
   if (jumpNow) p.jumpBuf = T.jumpBuffer; else p.jumpBuf -= dt;
   take('flash');
 
@@ -1376,6 +1436,10 @@ function tickPlayer(dt) {
     if (Math.random() < dt * (Math.abs(p.vx) > 20 ? 18 : 5)) burst(p.x + p.w / 2 + rnd(-8, 8), Math.floor((p.y + p.h - 3) / TILE) * TILE + 2, 1, { color: '#b8955c', ang: -Math.PI / 2, spread: 0.8, smin: 20, smax: 60, g: 200, lmin: 0.2, lmax: 0.4 });
     if (p.sandT > 1.6) { p.sandT = 0; hazardHit(); return; }
   } else p.sandT = 0;
+  // In tide water you float: buoyed up to the surface, slow to move, unable to dive
+  const surf = waterSurfaceAt(p.x + p.w / 2, p.y + p.h * 0.6), swim = surf !== null, depth = swim ? p.y + p.h * 0.5 - surf : 0;
+  if (swim) { p.airDash = true; p.airJump = true; if (!p.wasSwim && p.vy > 200) burst(p.x + p.w / 2, surf, 10, { color: '#9fd8e6', ang: -Math.PI / 2, spread: 0.9, smin: 60, smax: 200, g: 500, lmin: 0.3, lmax: 0.6 }); }
+  p.wasSwim = swim;
   // Horizontal
   let a = p.grounded ? (ix ? T.groundAccel : T.groundDecel) : (ix ? T.airAccel : T.airDecel);
   if (onIce) a *= 0.12;
@@ -1384,7 +1448,7 @@ function tickPlayer(dt) {
     if (p.grounded && Math.abs(p.vx) > 140 && Math.random() < 0.5) dust(p.x + p.w / 2, p.y + p.h, 1, ix > 0 ? -Math.PI * 0.85 : -Math.PI * 0.15);
   }
   if (p.hurtLock > 0) a = 500;
-  p.vx = approach(p.vx, ix * T.runSpeed * (p.beamOn ? T.beamMoveMult : 1) * (inSand ? 0.45 : 1) * (p.chill > 0 ? 0.6 : 1), a * dt);
+  p.vx = approach(p.vx, ix * T.runSpeed * (p.beamOn ? T.beamMoveMult : 1) * (inSand ? 0.45 : 1) * (p.chill > 0 ? 0.6 : 1) * (swim && !p.grounded ? 0.6 : 1), a * dt);
 
   // Flashstep: blink along your aim (the beam's direction while it burns); once per jump
   if (p.grounded) p.airDash = true;
@@ -1393,7 +1457,10 @@ function tickPlayer(dt) {
 
   // Jump (coyote + buffer), drop-through hidden walkways with Down+Jump
   if (p.grounded) p.coyote = T.coyoteTime; else p.coyote -= dt;
-  if (p.jumpBuf > 0 && p.coyote > 0 && p.hurtLock <= 0) {
+  if (swim && jumpNow && depth < 18 && !p.grounded && p.hurtLock <= 0) {      // kick up out of the water
+    p.vy = -jumpVel() * 0.82; p.jumping = true; p.jumpBuf = 0;
+    burst(p.x + p.w / 2, surf, 8, { color: '#9fd8e6', ang: -Math.PI / 2, spread: 0.8, smin: 40, smax: 160, g: 500, lmin: 0.25, lmax: 0.5 });
+  } else if (p.jumpBuf > 0 && p.coyote > 0 && p.hurtLock <= 0) {
     const fl = Math.floor((p.y + p.h + 1) / TILE), l = Math.floor(p.x / TILE), r = Math.floor((p.x + p.w - 0.01) / TILE);
     const onPlat = p.grounded && (isPlatform(l, fl) || isPlatform(r, fl));
     if (D && onPlat && !isSolid(l, fl) && !isSolid(r, fl)) { p.dropT = 0.22; p.y += 2; }
@@ -1416,10 +1483,14 @@ function tickPlayer(dt) {
   if (p.vy >= 0) p.jumping = false;
 
   // Gravity with apex hang and heavier fall
-  let g = p.dashT > 0 ? 0 : T.gravity;
-  if (!p.grounded && JH && Math.abs(p.vy) < T.apexThreshold) g *= T.apexGravMult;
-  else if (p.vy > 0) g *= T.fallMult;
-  p.vy = Math.min(p.vy + g * dt, inSand && p.vy > 0 ? 45 : T.maxFall);
+  if (swim && p.dashT <= 0 && !(p.jumping && p.vy < 0)) {       // buoyancy: a damped spring toward floating at the surface
+    p.vy += (-depth * 18 - p.vy * 3.4) * dt; p.vy = clamp(p.vy, -260, 220);
+  } else {
+    let g = p.dashT > 0 ? 0 : T.gravity;
+    if (!p.grounded && JH && Math.abs(p.vy) < T.apexThreshold) g *= T.apexGravMult;
+    else if (p.vy > 0) g *= T.fallMult;
+    p.vy = Math.min(p.vy + g * dt, inSand && p.vy > 0 ? 45 : T.maxFall);
+  }
 
   // Move & collide
   const wasGround = p.grounded, preVy = p.vy;
@@ -1894,6 +1965,10 @@ function tick(dt) {
   { const a = areaAt(Math.floor((P.x + P.w / 2) / TILE), Math.floor((P.y + P.h / 2) / TILE));
     if (a && a.name !== areaName) { areaName = a.name; areaCard = { name: a.name, t: 0, tier: a.tier || 0, first: !visited.has(a.name) }; visited.add(a.name); } }
   if (areaCard) { areaCard.t += dt; if (areaCard.t > 3.4) areaCard = null; }
+  tideClock += dt;
+  { const ph = tidePhase(), inB = basinAt(Math.floor((P.x + P.w / 2) / TILE), Math.floor((P.y + P.h / 2) / TILE));
+    if (inB && !seenTide) { seenTide = true; toast('The water here rises and falls with the tide.', 3); }
+    if (ph !== tideState) { tideState = ph; if (inB && (ph === 'rising' || ph === 'ebbing')) toast(ph === 'rising' ? 'The tide is coming in.' : 'The tide is going out.', 2.4); } }
   if ((seenT -= dt) <= 0) {                                // chart what the lantern and the beam light up
     seenT = 0.1; markSeen(P.x + P.w / 2, P.y + P.h / 2, lanternR() * 0.9);
     for (const sp of beamSpots(P)) markSeen(sp.x, sp.y, sp.r * 0.8);
@@ -1952,7 +2027,7 @@ function tick(dt) {
       else if (k === 'power' || k === 'range' || k === 'wide') upgrades[k] += amt;
       else { upgrades[k] = true; syncAbilityUI(); }
       if (k !== 'mask') P.fuel = P.maxFuel;
-      burst(u.px, u.py, 60, { color: mask ? '#bfe6ff' : k === 'dash' || k === 'updraft' ? '#ff9a4a' : k === 'fuel' ? '#f2b347' : '#e8f6ff', add: true, smin: 80, smax: 360, lmin: 0.5, lmax: 1.2 });
+      burst(u.px, u.py, 60, { color: mask ? '#bfe6ff' : k === 'dash' || k === 'updraft' || k === 'prism' ? '#ff9a4a' : k === 'fuel' ? '#f2b347' : '#e8f6ff', add: true, smin: 80, smax: 360, lmin: 0.5, lmax: 1.2 });
       reveal = { u, k, from, to: upgStatNow(k), x: u.px - cam.x, y: u.py - cam.y };
       state = 'reveal'; stateT = 0; clearPressed(); toasts = [];
     }
@@ -2502,7 +2577,15 @@ function sizedDraw(e, fn) {             // draw at the enemy's size, scaled abou
   const fly = e.type === 'wing' || e.type === 'wisp' || e.type === 'bloat', ax = e.x + e.w / 2, ay = fly ? e.y + e.h / 2 : e.type === 'drip' && e.state !== 'crawl' ? e.y : e.y + e.h;
   ctx.save(); ctx.translate(ax, ay); ctx.scale(e.sz, e.sz); ctx.translate(-ax, -ay); fn(e); ctx.restore();
 }
-function drawEnemy(e) { sizedDraw(e, drawEnemyBody); }
+function drawEnemy(e) {
+  sizedDraw(e, drawEnemyBody);
+  if (e.hue) {                                                    // a shell of coloured light
+    const cx = e.x + e.w / 2, cy = e.y + e.h / 2, r = Math.max(e.w, e.h) * 0.75 + 4, pul = 0.5 + 0.5 * Math.sin(time * 4 + e.seed);
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = e.hue === 'red' ? `rgba(255,110,80,${0.35 + 0.3 * pul})` : `rgba(110,160,255,${0.35 + 0.3 * pul})`; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(cx, cy, r, r * 0.85, 0, 0, 7); ctx.stroke(); ctx.restore();
+  }
+}
 function drawEnemyBody(e) {
   const pass = 'body'; const st = { t: e.t, dir: e.dir, flash: e.flash, wind: e.wind, spitT: e.spitT, elite: e.elite, state: e.state, vx: e.vx, vy: e.vy, grounded: e.grounded, charge: e.charge, chargeWind: e.chargeWind, time, pass };
   const cx = e.x + e.w / 2;
@@ -2678,6 +2761,7 @@ function render() {
   drawProps(); drawGlobs();
   for (const e of enemies) if (!e.dead) drawEnemy(e);
   if (state !== 'dying') drawPlayer();
+  drawTides();
   drawBeamCore();
   for (const q of particles) if (!q.add) { ctx.globalAlpha = clamp(q.life / q.max, 0, 1); ctx.fillStyle = q.color; ctx.fillRect(q.x - q.size / 2, q.y - q.size / 2, q.size, q.size); }
   ctx.globalAlpha = 1;
@@ -2777,7 +2861,7 @@ function render() {
       ctx.globalAlpha = a; ctx.fillStyle = '#e9dcb8'; ctx.font = `italic 18px ${FONT}`; ctx.textAlign = 'center';
       ctx.fillText(t.text, 0, 92 + i * 26); ctx.globalAlpha = 1;
     }
-    if (areaCard) drawAreaNote(-VW / 2 / uiScale + 26, 112);
+    if (areaCard) drawAreaNote(-VW / 2 / uiScale + 26, 112 + (upgrades.prism ? 20 : 0) + (seenTide ? 20 : 0));   // below the HUD's prism / tide lines
     ctx.restore();
   }
   let f = fade;
@@ -2860,10 +2944,10 @@ function drawBeam() {
   ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
   // 1) The visible shaft: brighten what the beam falls on, keeping its own colours.
   ctx.globalCompositeOperation = 'color-dodge'; ctx.globalAlpha = 0.85 * fl;
-  tintMask('rgb(150,132,104)'); drawTint();
+  tintMask(hueNow().t1); drawTint();
   // 2) Warm haze in the air.
   ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.42 * fl;
-  tintMask('rgb(255,214,150)'); drawTint();
+  tintMask(hueNow().t2); drawTint();
   ctx.restore();
   // 3) Where it lands: a soft lantern-like glow (the darkness there is lifted in collectLights).
   // Spill: cool and soft, lighting surfaces only. The warm, dusty shaft above is the part that burns.
@@ -2932,6 +3016,17 @@ function drawHUD() {
   if (p.burnout) { ctx.fillStyle = '#e9dcb8'; ctx.fillRect(x + 2 + (w - 4) * T.burnoutRelight / p.maxFuel - 1, y - 2, 2, h + 4); }
   // Embers toward the next wick: coals in a brass bracket
   DS.drawEmbers(ctx, x + w + 14, y + 5, { n: T.embersPerMask, have: p.embers, time });
+  let ly = 80;
+  if (upgrades.prism) {                                    // the prism's current colour
+    ctx.fillStyle = hueNow().col; ctx.beginPath(); ctx.moveTo(30, ly - 7); ctx.lineTo(36, ly + 4); ctx.lineTo(24, ly + 4); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(233,220,184,.75)'; ctx.font = `italic 13px ${FONT}`; ctx.fillText(upgrades.hue, 42, ly + 3); ly += 20;
+  }
+  if (seenTide) {                                          // the tide, once you've met it
+    const ph = tidePhase(), f = tideFrac();
+    ctx.strokeStyle = 'rgba(150,210,230,.8)'; ctx.lineWidth = 1.5; ctx.beginPath();
+    for (let i = 0; i <= 12; i++) { const px = 24 + i, py = ly - f * 6 + Math.sin(i * 0.9 + time * 3) * 1.5; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); } ctx.stroke();
+    ctx.fillStyle = 'rgba(233,220,184,.75)'; ctx.font = `italic 13px ${FONT}`; ctx.fillText({ low: 'low tide', rising: 'tide rising', high: 'high tide', ebbing: 'tide ebbing' }[ph], 42, ly + 3);
+  }
 }
 function panel(x, y, w, h) {
   ctx.fillStyle = 'rgba(5,11,22,.92)'; ctx.fillRect(x, y, w, h);
@@ -2975,7 +3070,7 @@ function drawLog() {
 }
 const CONTROLS = [
   ['Move', '← →  /  A D'], ['Aim up / down', '↑ ↓  /  W S'], ['Jump (hold = higher)', 'Space / Z / K'],
-  ['Lantern beam (hold)', 'X / J   — aim with ↑ ↓ ← →'], ['Read / turn mirror', 'E / C'], ['Flashstep (once found)', 'Shift / L'],
+  ['Lantern beam (hold)', 'X / J   — aim with ↑ ↓ ← →'], ['Read / turn mirror', 'E / C'], ['Flashstep (once found)', 'Shift / L'], ['Prism colour (once found)', 'Q / U'],
   ['Pause', 'Esc / P'], ['Feel tuning panel', 'T'], ['Map editor', 'M'], ['Touch', 'left stick move · right stick aim & hold light'],
 ];
 // Entering a region: the keeper's pen writes its name in the margin, underlines it, and marks its danger in flames.
@@ -3002,7 +3097,7 @@ function drawAreaNote(x, y) {
 function drawControls(x, y, fs = 15, lh = 24) {
   ctx.font = `${fs}px ${FONT}`;
   const touch = touchEl.classList.contains('on');   // show only the active scheme
-  const list = touch ? [['Move', 'left stick'], ['Aim & hold the beam', 'right stick'], ['Jump', 'Jump button'], ['Read / turn mirror', 'E button'], ['Flashstep (once found)', 'Step button'], ['Pause', 'II button']]
+  const list = touch ? [['Move', 'left stick'], ['Aim & hold the beam', 'right stick'], ['Jump', 'Jump button'], ['Read / turn mirror', 'E button'], ['Flashstep (once found)', 'Step button'], ['Prism colour (once found)', 'Hue button'], ['Pause', 'II button']]
     : CONTROLS.filter(([a]) => a !== 'Touch');
   for (const [a, k] of list) { ctx.textAlign = 'right'; ctx.fillStyle = '#9fb6c0'; ctx.fillText(a, x - 10, y); ctx.textAlign = 'left'; ctx.fillStyle = '#e9dcb8'; ctx.fillText(k, x + 10, y); y += lh; }
 }
@@ -3047,6 +3142,25 @@ function drawTravel() {
   ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(233,220,184,.6)'; ctx.font = `italic 13px ${FONT}`;
   ctx.fillText(touchEl.classList.contains('on') ? 'Stick to choose · Jump to go · II to stay' : '↑ ↓ choose · Jump / E go · Esc stay', 771, 482);
   ctx.restore();
+}
+function drawTides() {
+  const x0 = Math.floor(cam.x / TILE) - 1, x1 = Math.ceil((cam.x + VW) / TILE) + 1, y0 = Math.floor(cam.y / TILE) - 1, y1 = Math.ceil((cam.y + VH) / TILE) + 1;
+  for (const b of TIDE_DEF) {
+    if (b.x1 < x0 || b.x0 > x1 || b.y1 < y0 || b.y0 > y1) continue;
+    const s = tideSurfaceY(b), sr = Math.floor(s / TILE);
+    ctx.fillStyle = 'rgba(40,110,150,.32)';
+    for (let ty = Math.max(y0, b.y0, sr); ty <= Math.min(y1, b.y1); ty++) for (let tx = Math.max(x0, b.x0); tx <= Math.min(x1, b.x1); tx++) {
+      if (isSolid(tx, ty)) continue;
+      const top = Math.max(ty * TILE, s); ctx.fillRect(tx * TILE, top, TILE, (ty + 1) * TILE - top);
+    }
+    if (sr < b.y0 || sr > b.y1) continue;                     // the surface: a bright wavering line over open water
+    ctx.strokeStyle = 'rgba(170,225,240,.55)'; ctx.lineWidth = 1.5; ctx.beginPath();
+    for (let tx = Math.max(x0, b.x0); tx <= Math.min(x1, b.x1); tx++) {
+      if (isSolid(tx, sr)) continue;
+      for (let k = 0; k <= 4; k++) { const px = tx * TILE + k * 8, py = s + Math.sin(px * 0.05 + time * 2.4) * 1.6; k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+    }
+    ctx.stroke();
+  }
 }
 function drawPause() {
   ctx.fillStyle = 'rgba(1,3,8,.6)'; ctx.fillRect(0, 0, VW, VH);
@@ -3135,14 +3249,20 @@ function drawTanks() {
     }
   }
 }
+const SEAL_COL = {
+  G:    { base: '#120c20', fill: 'rgba(120,90,200,.18)', line: '170,140,255', spark: '#e9e0ff', glance: '#a99ad8', shard: '#2a2140' },
+  red:  { base: '#240c0a', fill: 'rgba(230,80,60,.22)', line: '255,120,90', spark: '#ffd0c0', glance: '#ff8a6a', shard: '#4a1610' },
+  blue: { base: '#0a1426', fill: 'rgba(70,130,240,.22)', line: '130,180,255', spark: '#d8e8ff', glance: '#7aa8ff', shard: '#10224a' },
+};
 function drawDarkglass() {
   for (const sl of seals) {
     if (sl.broken) continue;
+    const C = SEAL_COL[sl.kind];
     for (const [tx, ty] of sl.tiles) {
       const px = tx * TILE, py = ty * TILE;
-      ctx.fillStyle = '#120c20'; ctx.fillRect(px, py, TILE, TILE);
-      ctx.fillStyle = 'rgba(120,90,200,.18)'; ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
-      ctx.strokeStyle = `rgba(170,140,255,${0.35 + 0.15 * Math.sin(time * 1.7 + tx + ty)})`; ctx.lineWidth = 1;
+      ctx.fillStyle = C.base; ctx.fillRect(px, py, TILE, TILE);
+      ctx.fillStyle = C.fill; ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
+      ctx.strokeStyle = `rgba(${C.line},${0.35 + 0.15 * Math.sin(time * 1.7 + tx + ty)})`; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(px + 6, py + 26); ctx.lineTo(px + 14, py + 6); ctx.moveTo(px + 18, py + 28); ctx.lineTo(px + 26, py + 12); ctx.stroke();
       if (sl.crack > 0) {                      // cracks spread as the focus works on it
         const rnd2 = mulberry(tx * 31 + ty * 17);
@@ -3167,6 +3287,7 @@ function drawUpgIcon(c, kind, x, y, k) {
   if (kind === 'mask') return drawHeart(c, x, y, k);
   if (kind === 'power') return drawShard(c, x, y, k);
   if (kind === 'range' || kind === 'wide') return drawLensIcon(c, x, y, k, kind === 'wide');
+  if (kind === 'prism') return drawPrismIcon(c, x, y, k);
   if (kind === 'dash' || kind === 'updraft') return drawAbilityIcon(c, x, y, k, kind);
   return drawFlask(c, x, y, k);
 }
@@ -3186,6 +3307,17 @@ function drawLensIcon(c, x, y, k, wide) {        // a ringed lens; wide = squat,
   c.fillStyle = 'rgba(190,225,240,.6)'; c.strokeStyle = '#c9a85a'; c.lineWidth = 2;
   c.beginPath(); c.ellipse(0, 0, rx, ry, 0, 0, 7); c.fill(); c.stroke();
   c.strokeStyle = 'rgba(255,255,255,.8)'; c.lineWidth = 1; c.beginPath(); c.ellipse(-rx * 0.3, -ry * 0.3, rx * 0.35, ry * 0.3, 0, 3.4, 5.2); c.stroke();
+  c.restore();
+}
+function drawPrismIcon(c, x, y, k) {           // a glass triangle fanning light into colours
+  c.save(); c.translate(x, y); c.scale(k, k);
+  c.globalCompositeOperation = 'lighter';
+  const cols = ['rgba(255,110,90,.55)', 'rgba(255,220,120,.45)', 'rgba(120,230,150,.4)', 'rgba(120,170,255,.55)'];
+  cols.forEach((col, i) => { c.fillStyle = col; c.beginPath(); c.moveTo(3, 0); c.lineTo(18, -6 + i * 4); c.lineTo(18, -3 + i * 4); c.closePath(); c.fill(); });
+  c.fillStyle = 'rgba(255,250,235,.5)'; c.fillRect(-18, -1, 12, 2);
+  c.globalCompositeOperation = 'source-over';
+  c.fillStyle = 'rgba(210,235,255,.55)'; c.strokeStyle = '#f4fbff'; c.lineWidth = 1.2;
+  c.beginPath(); c.moveTo(0, -11); c.lineTo(9, 7); c.lineTo(-9, 7); c.closePath(); c.fill(); c.stroke();
   c.restore();
 }
 function drawAbilityIcon(c, x, y, k, kind) {     // a living flame: streaked for the dash, rising for the updraft
@@ -3323,6 +3455,7 @@ const ED_TILES = [
   { ch: '~', label: 'Water', key: '3', col: '#1d8a90' }, { ch: '=', label: 'Hidden walk', key: '4', col: '#c9973f' },
   { ch: 'G', label: 'Darkglass', key: '5', col: '#6a4cb0' }, { ch: 'D', label: 'Crystal door', key: '6', col: '#8a6a3c' },
   { ch: 'S', label: 'Quicksand', key: '7', col: '#8a6a40' }, { ch: 'I', label: 'Ice', key: '8', col: '#7fc4e0' },
+  { ch: 'R', label: 'Red seal', key: '9', col: '#c0402c' }, { ch: 'B', label: 'Blue seal', key: '0', col: '#3a6ad0' },
 ];
 const ED_OBJS = [
   { id: 'select', label: 'Select / move', key: 'V', col: '#e9dcb8' }, { id: 'erase', label: 'Erase object', key: 'X', col: '#d06a5a' },
@@ -3347,9 +3480,10 @@ const ED_FIELDS = {
   enemies: [{ k: 't', l: 'Type', type: 'select', opts: [['murk', 'Murkling'], ['shell', 'Shellback'], ['wing', 'Gloomwing'], ['drip', 'Dripper'], ['crawler', 'Sand Crawler'], ['wisp', 'Frost Wisp'], ['bloat', 'Bloat']] },
             { k: 'elite', l: 'Harder variant', type: 'check' },
             { k: 'size', l: 'Size', type: 'select', opts: [['normal', 'Normal'], ['small', 'Small'], ['big', 'Big']], get: o => o.size || (o.swarm > 1 ? 'small' : 'normal') },
-            { k: 'swarm', l: 'Swarm count', type: 'num' }],
+            { k: 'swarm', l: 'Swarm count', type: 'num' },
+            { k: 'hue', l: 'Colour shield', type: 'select', opts: [['', 'None'], ['red', 'Red'], ['blue', 'Blue']], get: o => o.hue || '' }],
   lore: [{ k: 'title', l: 'Title', type: 'text' }, { k: 'text', l: 'Text', type: 'area' }],
-  upgrades: [{ k: 'kind', l: 'Kind', type: 'select', opts: [['fuel', 'Oil (fuel)'], ['mask', 'Wick (health)'], ['power', 'Lens shard (beam power %)'], ['range', 'Long lens (reach px)'], ['wide', 'Wide lens (half-angle °)'], ['dash', 'Flashstep'], ['updraft', 'Updraft']] },
+  upgrades: [{ k: 'kind', l: 'Kind', type: 'select', opts: [['fuel', 'Oil (fuel)'], ['mask', 'Wick (health)'], ['power', 'Lens shard (beam power %)'], ['range', 'Long lens (reach px)'], ['wide', 'Wide lens (half-angle °)'], ['dash', 'Flashstep'], ['updraft', 'Updraft'], ['prism', 'Prism (colours)']] },
              { k: 'amt', l: 'Amount', type: 'num' }, { k: 'name', l: 'Name', type: 'text' }, { k: 'sealed', l: 'Sealed in darkglass', type: 'check' }],
   tanks: [{ k: 'kind', l: 'Kind', type: 'select', opts: [['lens', 'Lens bowl'], ['prism', 'Prism']] },
           { k: 'w', l: 'Width', type: 'num' }, { k: 'h', l: 'Height', type: 'num' },
@@ -3362,7 +3496,7 @@ const ED_FIELDS = {
 const ed = { map: null, grid: null, tool: '#', zoom: 0.5, cx: 0, cy: 0, hover: null, drag: null, sel: null, undo: [], redo: [], check: null, space: false, saveT: 0 };
 const edEl = document.getElementById('ed'), edMsg = document.getElementById('edMsg'), edOpts = document.getElementById('edOpts');
 const edSay = (t, warn) => { edMsg.textContent = t; edMsg.style.color = warn ? '#ff9a7a' : '#f2c46d'; };
-const edSolid = c => c === '#' || c === 'G' || c === 'D' || c === 'I' || c === 'S';
+const edSolid = c => c === '#' || c === 'G' || c === 'D' || c === 'I' || c === 'S' || c === 'R' || c === 'B';
 function edSnapshot() { ed.map.rows = ed.grid.map(r => r.join('')); return JSON.stringify(ed.map); }
 function edPush() { ed.undo.push(edSnapshot()); if (ed.undo.length > 80) ed.undo.shift(); ed.redo = []; ed.check = null; }
 function edRestore(json) { ed.map = JSON.parse(json); ed.grid = ed.map.rows.map(r => r.split('')); ed.sel = null; ed.check = null; edBuildOpts(); edAutosave(); }
@@ -3442,7 +3576,7 @@ function edLine(a, b) { const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a
 function edReach() {
   const tank = new Set(); for (const t of ed.map.tanks) for (let y = t.y; y < t.y + t.h; y++) for (let x = t.x; x < t.x + t.w; x++) tank.add(y * W + x);
   const g = ed.grid, tc = (x, y) => x < 0 || y < 0 || x >= W || y >= H ? '#' : tank.has(y * W + x) ? 'w' : g[y][x];
-  const solid = (x, y) => { const c = tc(x, y); return c === '#' || c === 'G' || c === 'w' || c === 'I'; };
+  const solid = (x, y) => { const c = tc(x, y); return c === '#' || c === 'G' || c === 'w' || c === 'I' || c === 'R' || c === 'B'; };
   const plat = (x, y) => solid(x, y) || tc(x, y) === '=' || tc(x, y) === 'S', open = (x, y) => !solid(x, y) && tc(x, y) !== '~' && tc(x, y) !== 'S';
   const stand = (x, y) => open(x, y) && tc(x, y) !== '=' && plat(x, y + 1) && tc(x, y + 1) !== '~';
   const land = (x, y) => { while (y < H - 1) { if (!open(x, y)) return -1; if (stand(x, y)) return y * W + x; if (tc(x, y + 1) === '~') return -1; y++; } return -1; };
@@ -3613,7 +3747,7 @@ function edIcon(b, sx, sy, ts) {
   else if (L === 'lamps') disc('#ffd27a', 'L');
   else if (L === 'pools') { ctx.fillStyle = '#8a5ad0'; ctx.beginPath(); ctx.ellipse(cx, sy + ts * 0.85, s * 0.6, s * 0.25, 0, 0, 7); ctx.fill(); }
   else if (L === 'lore') disc('#6fd6d0', 'i');
-  else if (L === 'upgrades') disc(o.kind === 'mask' ? '#a8dcff' : o.kind === 'dash' || o.kind === 'updraft' ? '#ff9a4a' : o.kind === 'fuel' || !o.kind ? '#f2b347' : '#e8f6ff', { mask: '♥', power: '◆', range: 'L', wide: 'W', dash: '»', updraft: '^' }[o.kind] || '+', o.sealed ? '#b48cff' : null);
+  else if (L === 'upgrades') disc(o.kind === 'mask' ? '#a8dcff' : o.kind === 'dash' || o.kind === 'updraft' || o.kind === 'prism' ? '#ff9a4a' : o.kind === 'fuel' || !o.kind ? '#f2b347' : '#e8f6ff', { mask: '♥', power: '◆', range: 'L', wide: 'W', dash: '»', updraft: '^', prism: '△' }[o.kind] || '+', o.sealed ? '#b48cff' : null);
   else if (L === 'enemies') disc({ murk: '#9a6ad8', shell: '#8b93a8', wing: '#7a7ae0', drip: '#5ab0c0', crawler: '#c9a86a', wisp: '#bfe8ff', bloat: '#4fb07a' }[o.t], (l => (o.size === 'big' ? l.toUpperCase() : l) + (o.swarm > 1 ? o.swarm : ''))({ murk: 'm', shell: 's', wing: 'w', drip: 'd', crawler: 'c', wisp: 'f', bloat: 'b' }[o.t]), o.elite ? '#ff7ac8' : null);
   else if (L === 'tanks') {
     ctx.fillStyle = 'rgba(80,190,210,.35)'; ctx.fillRect(sx, sy, ts * o.w, ts * o.h);
@@ -3635,7 +3769,7 @@ function drawEditor() {
   const x0 = Math.max(0, Math.floor(ed.cx / TILE)), y0 = Math.max(0, Math.floor(ed.cy / TILE));
   const x1 = Math.min(W - 1, Math.ceil((ed.cx + VW / z) / TILE)), y1 = Math.min(H - 1, Math.ceil((ed.cy + VH / z) / TILE));
   const SX = x => (x * TILE - ed.cx) * z, SY = y => (y * TILE - ed.cy) * z;
-  const col = { '#': '#2b4258', '.': '#0b1622', '~': '#1a7c84', '=': '#0b1622', 'G': '#4e3888', 'D': '#7a5a34', 'S': '#7a5c36', 'I': '#6fb0cc' };
+  const col = { '#': '#2b4258', '.': '#0b1622', '~': '#1a7c84', '=': '#0b1622', 'G': '#4e3888', 'D': '#7a5a34', 'S': '#7a5c36', 'I': '#6fb0cc', 'R': '#a03a2a', 'B': '#2a4ea0' };
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     const c = ed.grid[y][x]; ctx.fillStyle = col[c] || '#2b4258'; ctx.fillRect(SX(x), SY(y), ts + 0.6, ts + 0.6);
     if (c === '#' && y > 0 && ed.grid[y - 1][x] !== '#' && ed.grid[y - 1][x] !== 'D') { ctx.fillStyle = '#4f8f86'; ctx.fillRect(SX(x), SY(y), ts + 0.6, Math.max(1, ts * 0.12)); }
@@ -3669,7 +3803,7 @@ function drawEditor() {
 }
 OFFICIAL = officialMap();
 customActive = !!customMap();
-window.__lumen = { globsN: () => globs.length, ed, enterEditor, exitEditor, edReach, tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get logOpen() { return logOpen; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, upgrades: () => upgrades, hidden: () => hidden, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
+window.__lumen = { globsN: () => globs.length, ed, enterEditor, exitEditor, edReach, tile: (x, y) => tileAt(x, y), solid: (x, y) => isSolid(x, y), T, get P() { return P; }, get state() { return state; }, get logOpen() { return logOpen; }, get enemies() { return enemies; }, get beam() { return beam; }, get door() { return door; }, pools: () => pools, upgrades: () => upgrades, tide: t => { if (t != null) tideClock = t; return tideClock; }, hidden: () => hidden, mirrors: () => mirrors, lamps: () => lamps, embers: () => embers, tick, newGame };
 })();
 </script>
 </body>
